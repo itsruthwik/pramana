@@ -30,11 +30,12 @@ class Config:
     llm_effort: str = "low"
     # search budget
     rounds: int = 4
-    runs_per_design_per_round: int = 6
+    runs_per_design_per_round: int = 8
     share_exploit: float = 0.7
     share_test: float = 0.2
     share_audit: float = 0.1
     noise_floor_ns: float = 0.005     # minimum; raised by measured repeat spread
+    discover_trials: int = 6
     designs: list[str] = field(default_factory=list)   # restrict to these ids (empty = all)
 
     @property

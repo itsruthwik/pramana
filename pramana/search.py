@@ -22,7 +22,7 @@ from .campaign import Campaign
 from .space import chain_key, step_factors
 
 INVALID_PENALTY = 0.05     # ns-equivalent penalty for an illegal result
-UCB_C = 1.0
+UCB_C = 0.5
 OTHER_DESIGN_WEIGHT = 0.25
 
 
@@ -49,11 +49,14 @@ def reward(r: dict) -> float:
     return r["d_wns"] or 0.0
 
 
-def factor_stats(c: Campaign, did: str) -> dict[str, list[float]]:
-    """factor -> [weighted sum, weight] over all runs (this design weight 1, others less)."""
+def factor_stats(c: Campaign, did: str, from_input: bool) -> dict[str, list[float]]:
+    """factor -> [weighted sum, weight] over runs that start from the same kind of state as
+    the candidates (input DCP vs an improved state): a re-place gains a lot from the input
+    but usually loses from a tuned state, so the two must not be mixed.
+    This design weight 1, others OTHER_DESIGN_WEIGHT."""
     stats: dict[str, list[float]] = {}
     for r in c.results():
-        if r.get("extra_tcl") or r["purpose"] == "probe" and not r["valid"]:
+        if r.get("extra_tcl") or (r["start"] == "input") != from_input:
             continue
         w = 1.0 if r["design"] == did else OTHER_DESIGN_WEIGHT
         rw = reward(r)
@@ -67,18 +70,19 @@ def factor_stats(c: Campaign, did: str) -> dict[str, list[float]]:
     return stats
 
 
-def bandit_score(chain: list[dict], stats: dict, n_total: float, scale: float) -> float:
+def bandit_parts(chain: list[dict], stats: dict, n_total: float, scale: float) -> tuple[float, float]:
+    """(value estimate, UCB exploration bonus); bonus is on the scale of typical gains."""
     fs = set()
     for st in chain:
-        fs.update(step_factors(st))
+        fs.update(f for f in step_factors(st) if ":" in f)
     if not fs:
-        return 0.0
+        return 0.0, 0.0
     means, bonus = [], []
     for f in fs:
         s, w = stats.get(f, (0.0, 0.0))
         means.append(s / w if w else 0.0)
         bonus.append(math.sqrt(math.log(n_total + 2) / (w + 1)))
-    return sum(means) / len(means) + UCB_C * scale * sum(bonus) / len(bonus)
+    return sum(means) / len(means), UCB_C * scale * sum(bonus) / len(bonus)
 
 
 # --------------------------------------------------------------------------- candidates
@@ -128,15 +132,17 @@ def allocate(c: Campaign, did: str, pr: dict, start: dict, rnd: int, w_llm: floa
     cfg = c.cfg
     spec = c.spec()
     n = cfg.runs_per_design_per_round
-    n_exp = max(1, round(n * cfg.share_exploit))
+    n_aud = max(1, round(n * cfg.share_audit))
     n_test = max(1, round(n * cfg.share_test))
-    n_aud = max(0, n - n_exp - n_test)
+    n_exp = max(1, n - n_test - n_aud)
     done = {(r["start"], r["chain_key"]) for r in c.results(did)}
-    stats = factor_stats(c, did)
+    from_input = start["id"] == "input"
+    stats = factor_stats(c, did, from_input)
     n_total = sum(w for _, w in stats.values())
-    gains = [abs(r["d_wns"]) for r in c.results(did) if r["valid"] and r["d_wns"] is not None]
-    scale = sorted(gains)[len(gains) // 2] if gains else 0.05
-    scale = max(scale, 0.01)
+    gains = [abs(r["d_wns"]) for r in c.results(did) if r["valid"] and r["d_wns"] is not None
+             and (r["start"] == "input") == from_input]
+    scale = sorted(gains)[len(gains) // 2] if gains else 0.03
+    scale = min(max(scale, 0.01), 0.1)
 
     # ---- exploit
     cands: dict[str, dict] = {}
@@ -155,18 +161,30 @@ def allocate(c: Campaign, did: str, pr: dict, start: dict, rnd: int, w_llm: floa
     for k, cd in cands.items():
         if (start["id"], k) in done:
             continue
-        b = bandit_score(cd["chain"], stats, n_total, scale)
-        s = (1 - w_llm) * b + w_llm * cd["pred"] if cd["pred"] is not None else b
+        v, bonus = bandit_parts(cd["chain"], stats, n_total, scale)
+        s = ((1 - w_llm) * v + w_llm * cd["pred"] if cd["pred"] is not None else v) + bonus
         scored.append((s, k, cd))
     scored.sort(key=lambda x: -x[0])
-    jobs, chosen, per_primary = [], set(), {}
+    jobs, chosen, per_cmd = [], set(), {}
+    cap = max(1, (n_exp + 1) // 2)
+    # one exploit slot is always the bandit's own best non-LLM pick (keeps LLM vs bandit
+    # comparable and stops the LLM from starving unproposed regions)
+    bandit_pick = next(((s, k, cd) for s, k, cd in scored if cd["src"] != "llm"), None)
+    if bandit_pick and n_exp >= 2:
+        s0, k0, cd0 = bandit_pick
+        chosen.add(k0)
+        per_cmd[cd0["chain"][0]["cmd"]] = 1
+        jobs.append(c.job(did, start, cd0["chain"], "exploit", round=rnd, tag="bandit",
+                          score=round(s0, 4)))
     for s, k, cd in scored:
+        if k in chosen:
+            continue
         if len(jobs) >= n_exp:
             break
-        prim = space.step_key({k2: v for k2, v in cd["chain"][0].items() if k2 != "opts"})
-        if per_primary.get(prim, 0) >= 2:
+        prim = cd["chain"][0]["cmd"]
+        if per_cmd.get(prim, 0) >= cap:
             continue
-        per_primary[prim] = per_primary.get(prim, 0) + 1
+        per_cmd[prim] = per_cmd.get(prim, 0) + 1
         chosen.add(k)
         jobs.append(c.job(did, start, cd["chain"], "exploit", round=rnd, tag=cd["src"],
                           score=round(s, 4)))
@@ -189,7 +207,11 @@ def allocate(c: Campaign, did: str, pr: dict, start: dict, rnd: int, w_llm: floa
     for st in floor:
         if ("input", chain_key([st])) not in done:
             tests.append(c.job(did, inp, [st], "test", round=rnd, tag="floor"))
-    jobs += tests[:n_test]
+    # interleave hypothesis tests and floor runs so both get budget
+    hyp = [t for t in tests if t["tag"] == "hypothesis"]
+    flr = [t for t in tests if t["tag"] == "floor"]
+    mixed = [x for pair in zip(hyp, flr) for x in pair] + hyp[len(flr):] + flr[len(hyp):]
+    jobs += mixed[:n_test]
     # ---- audit: pruned-out points
     if pr.get("cuts"):
         for _ in range(n_aud):

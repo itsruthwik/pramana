@@ -72,6 +72,8 @@ def action_profiles(c: Campaign) -> list[dict]:
                 incr[f].append(r["d_wns"])
     out = []
     for f, by_d in per.items():
+        if ":" not in f:   # bare command = a group of actions, not an action
+            continue
         eff, valid_n, all_n, costs = {}, 0, 0, []
         for did, rs in by_d.items():
             all_n += len(rs)
