@@ -295,6 +295,7 @@ def policies(c: Campaign, rng: random.Random) -> dict:
         "oracle_d_wns": oracle,
         "matrix": {k: {d: round(v, 4) for d, v in row.items()} for k, row in M.items()},
         "one_bin": {"policy": one, "chain": pols.get(one, {}).get("chain"),
+                    "units": pols.get(one, {}).get("units"),
                     "train_frac_of_oracle": round(statistics.mean(_frac(M[one][d], oracle[d]) for d in designs), 3),
                     "lofo_frac_of_oracle": round(one_lofo, 3)},
     }
@@ -312,6 +313,8 @@ def policies(c: Campaign, rng: random.Random) -> dict:
                              "policy_low": fit[2], "policy_high": fit[3],
                              "chain_low": pols.get(fit[2], {}).get("chain"),
                              "chain_high": pols.get(fit[3], {}).get("chain"),
+                             "units_low": pols.get(fit[2], {}).get("units"),
+                             "units_high": pols.get(fit[3], {}).get("units"),
                              "lofo_frac_of_oracle": round(best_s, 3), "perm_p": round(p, 3),
                              "accepted": p < 0.2}
     else:
@@ -431,9 +434,11 @@ def cost_model(c: Campaign) -> dict:
         if not prims or not r["valid"]:
             continue
         for s in r["steps"]:
-            cmd = s["name"].split("_", 1)[-1].replace("_auto", "").replace("__auto", "")
-            if s["secs"] > 0.5:
-                pts[cmd.split("__")[0]].append((math.log(prims), math.log(s["secs"])))
+            n = s["name"]
+            cmd = ("phys_opt" if "phys_opt" in n else "place" if "place" in n else
+                   "route" if "route" in n else "opt" if "opt" in n else None)
+            if cmd and s["secs"] > 0.5:
+                pts[cmd].append((math.log(prims), math.log(s["secs"])))
     out = {}
     for cmd, xy in pts.items():
         if len(xy) < 3:

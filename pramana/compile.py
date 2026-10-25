@@ -34,17 +34,20 @@ def step_mode(step: dict, ship: dict) -> str:
     return "committed" if fs and all(ship.get(f) == "plain" for f in fs) else "candidate"
 
 
-def policy_steps(chain: list[dict], kb: dict) -> list[dict]:
-    """Expand a policy chain into executable steps, one per chain element, each with Tcl that
-    assumes a ROUTED start and leaves the design ROUTED (so each can be kept or reverted)."""
+def policy_steps(units: list[list[dict]], kb: dict) -> list[dict]:
+    """One executable step per unit (a measured run: starts ROUTED, ends ROUTED), so each can
+    be kept or reverted exactly as it was measured."""
     ship = _ship_by_factor(kb)
     out = []
-    for st in chain:
-        cmds = []
-        for _, cs, _ in flow.expand([st]):
+    for u in units:
+        cmds, kinds = [], []
+        for name, cs, auto in flow.expand(u):
             cmds += cs
-        out.append({"name": step_key(st), "step": st, "tcl": cmds, "mode": step_mode(st, ship),
-                    "cmds": [st["cmd"]]})
+            kinds.append(name.split("_", 1)[-1].replace("auto_", ""))
+        modes = {step_mode(st, ship) for st in u}
+        out.append({"name": chain_key(u), "units": u, "tcl": cmds,
+                    "mode": "committed" if modes == {"committed"} else "candidate",
+                    "cmds": kinds})
     return out
 
 
@@ -55,9 +58,11 @@ def bins(kb: dict) -> dict:
     if pol.get("bins") == "two":
         tb = pol["two_bin"]
         return {"type": "two", "feature": tb["feature"], "threshold": tb["threshold"],
-                "low": tb["chain_low"], "high": tb["chain_high"],
+                "low": tb.get("units_low") or [tb["chain_low"]],
+                "high": tb.get("units_high") or [tb["chain_high"]],
                 "lofo": tb["lofo_frac_of_oracle"], "perm_p": tb["perm_p"]}
-    return {"type": "one", "all": pol["one_bin"]["chain"], "lofo": pol["one_bin"]["lofo_frac_of_oracle"]}
+    return {"type": "one", "all": pol["one_bin"].get("units") or [pol["one_bin"]["chain"]],
+            "lofo": pol["one_bin"]["lofo_frac_of_oracle"]}
 
 
 def extra_actions(kb: dict, n: int = 6) -> list[dict]:
@@ -154,13 +159,13 @@ def context_md(kb: dict, b: dict) -> str:
     if b["type"] == "one":
         L.append(f"One strategy for all designs (held-out families reached {b['lofo']:.0%} of each "
                  f"design's best-known gain):")
-        L.append("    " + " > ".join(step_key(s) for s in b["all"] or []))
+        L.append("    " + " | then | ".join(chain_key(u) for u in b["all"] or []))
         L.append("Tcl: ::pramana::policy_all (in recipes.tcl).")
     elif b["type"] == "two":
         L.append(f"Two strategies split on feature {b['feature']} at {b['threshold']} "
                  f"(held-out families reached {b['lofo']:.0%} of best-known gain):")
-        L.append(f"  {b['feature']} <= {b['threshold']}: " + " > ".join(step_key(s) for s in b["low"] or []))
-        L.append(f"  {b['feature']} > {b['threshold']}: " + " > ".join(step_key(s) for s in b["high"] or []))
+        L.append(f"  {b['feature']} <= {b['threshold']}: " + " | then | ".join(chain_key(u) for u in b["low"] or []))
+        L.append(f"  {b['feature']} > {b['threshold']}: " + " | then | ".join(chain_key(u) for u in b["high"] or []))
     L += ["", "### Actions measured from the input checkpoint (one step each)",
           "action | designs | median dWNS | P(gain) | P(regress) | rel. cost | grade | ship",
           "--- | --- | --- | --- | --- | --- | --- | ---"]
@@ -320,9 +325,10 @@ def run(c: Campaign, log=print) -> None:
         pols["low"] = policy_steps(b["low"] or [], kb)
         pols["high"] = policy_steps(b["high"] or [], kb)
     strip = lambda ss: [{k: s[k] for k in ("name", "tcl", "mode", "cmds")} for s in ss]
+    singles = [[st] for st in extra_actions(kb)]
     pols = {k: strip(v) for k, v in pols.items()}
     policy_keys = {s["name"] for v in pols.values() for s in v}
-    extra = [s for s in strip(policy_steps(extra_actions(kb), kb)) if s["name"] not in policy_keys]
+    extra = [s for s in strip(policy_steps(singles, kb)) if s["name"] not in policy_keys]
     (mith / "recipes.py").write_text(RECIPES_PY.format(
         cost_model=repr(kb["cost_model"]), policies=repr(pols), extra=repr(extra)))
     policy = {"bins": b, "policies": pols, "extra_actions": extra, "kb_meta": kb["meta"]}

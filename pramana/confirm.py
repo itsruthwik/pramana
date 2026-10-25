@@ -10,17 +10,40 @@ from __future__ import annotations
 
 import json
 
+from . import flow
 from .campaign import Campaign
 from .space import chain_key
 
 
-def lineage_chain(c: Campaign, did: str, sid: str) -> list[dict]:
-    chain: list[dict] = []
+def lineage_units(c: Campaign, did: str, sid: str) -> list[list[dict]]:
+    """The runs from the input DCP to state sid; each is a unit that starts and ends routed."""
+    units: list[list[dict]] = []
     while sid != "input":
         r = next(r for r in c.results(did) if r["run_id"] == sid)
-        chain = r["chain"] + chain
+        units.insert(0, r["chain"])
         sid = r["start"]
-    return chain
+    return units
+
+
+def flatten(units: list[list[dict]]) -> list[dict]:
+    """One chain equivalent to running the units in sequence: each unit's trailing
+    auto place/route (added by flow.expand) becomes an explicit step, so the next unit
+    starts from a routed design exactly as it did when measured."""
+    out: list[dict] = []
+    for u in units:
+        out += u
+        exp = flow.expand(u)
+        trailing = []
+        for name, _, auto in reversed(exp):
+            if not auto or not name.startswith("auto_"):
+                break
+            trailing.insert(0, {"cmd": name.split("_", 1)[1]})
+        out += trailing
+    return out
+
+
+def lineage_chain(c: Campaign, did: str, sid: str) -> list[dict]:
+    return flatten(lineage_units(c, did, sid))
 
 
 def policies(c: Campaign) -> dict[str, dict]:
@@ -30,13 +53,14 @@ def policies(c: Campaign) -> dict[str, dict]:
         best = c.best_state(d["id"])
         if best["id"] == "input":
             continue
-        ch = lineage_chain(c, d["id"], best["id"])
+        units = lineage_units(c, d["id"], best["id"])
+        ch = flatten(units)
         k = chain_key(ch)
-        out.setdefault(k, {"chain": ch, "from_designs": []})["from_designs"].append(d["id"])
+        out.setdefault(k, {"chain": ch, "units": units, "from_designs": []})["from_designs"].append(d["id"])
     # also the Explore baselines as reference policies
     from .baseline import BASELINES
     for tag, ch in BASELINES.items():
-        out.setdefault(chain_key(ch), {"chain": ch, "from_designs": [], "baseline": tag})
+        out.setdefault(chain_key(ch), {"chain": ch, "units": [ch], "from_designs": [], "baseline": tag})
     return out
 
 
