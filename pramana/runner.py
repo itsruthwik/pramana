@@ -12,7 +12,7 @@ import json
 import re
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from . import flow, tcl
@@ -23,8 +23,13 @@ from .vivado import est_mem_gb, run_vivado
 _db_lock = threading.Lock()
 
 
-def run_id(design: str, start: str, chain: list[dict]) -> str:
-    return hashlib.sha1(f"{design}|{start}|{chain_key(chain)}".encode()).hexdigest()[:12]
+def run_id(design: str, start: str, chain: list[dict], rep: int = 0, extra_tcl: str = "") -> str:
+    key = f"{design}|{start}|{chain_key(chain)}"
+    if rep:
+        key += f"|rep{rep}"
+    if extra_tcl:
+        key += "|" + extra_tcl
+    return hashlib.sha1(key.encode()).hexdigest()[:12]
 
 
 def build_script(start_dcp: str, chain: list[dict], run_dir: Path, threads: int,
@@ -116,8 +121,8 @@ class Runner:
     # ------------------------------------------------------------------ one run
     def run(self, job: dict) -> dict:
         """job = {design, start, start_dcp, start_wns, chain, purpose, dcp_mb, [tag], [extra_tcl]}"""
-        rid = run_id(job["design"], job["start"], job["chain"]) if not job.get("extra_tcl") else \
-            hashlib.sha1((job["design"] + job["start"] + job["extra_tcl"]).encode()).hexdigest()[:12]
+        rid = run_id(job["design"], job["start"], job["chain"], job.get("rep", 0),
+                     job.get("extra_tcl", ""))
         rdir = self.runs_dir / job["design"] / rid
         rdir.mkdir(parents=True, exist_ok=True)
         script = build_script(job["start_dcp"], job["chain"], rdir, self.cfg.threads,
@@ -139,6 +144,7 @@ class Runner:
             "chain": job["chain"], "chain_key": chain_key(job["chain"]),
             "extra_tcl": job.get("extra_tcl"),
             "purpose": job.get("purpose", "?"), "tag": job.get("tag"), "round": job.get("round"),
+            "rep": job.get("rep", 0),
             "status": parsed["status"], "valid": valid, "result": res,
             "start_wns": job.get("start_wns"), "d_wns": d_wns,
             "steps": parsed["steps"], "opt_secs": round(opt_secs, 1),
@@ -153,14 +159,16 @@ class Runner:
         done = self.done_ids()
         todo = []
         for j in jobs:
-            rid = run_id(j["design"], j["start"], j["chain"])
-            if j.get("extra_tcl") or rid not in done:
+            rid = run_id(j["design"], j["start"], j["chain"], j.get("rep", 0), j.get("extra_tcl", ""))
+            if rid not in done:
                 todo.append(j)
         log(f"[runner] {len(todo)} runs to do ({len(jobs) - len(todo)} already done), "
             f"{self.cfg.workers} workers")
         out = []
         with ThreadPoolExecutor(self.cfg.workers) as ex:
-            for rec in ex.map(self._safe_run, todo):
+            futs = [ex.submit(self._safe_run, j) for j in todo]
+            for fut in as_completed(futs):
+                rec = fut.result()
                 if rec:
                     log(f"[runner] {rec['design']:28s} {rec['status']:7s} valid={rec['valid']!s:5s} "
                         f"dWNS={rec['d_wns']} t={rec['wall_s']}s  {rec['chain_key'][:90]}")
