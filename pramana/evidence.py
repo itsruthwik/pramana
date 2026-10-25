@@ -34,15 +34,39 @@ def _read(p: Path) -> str:
     return p.read_text(errors="replace") if p.exists() else ""
 
 
+DA_COLS = ["Paths", "Path Delay", "Logic Delay", "Net Delay", "Clock Skew", "Slack",
+           "Logic Levels", "Routes", "Logical Path", "DSP Block", "RAM Registers", "High Fanout",
+           "Start Point Pin Primitive", "End Point Pin Primitive"]
+
+
+def design_analysis_compact(text: str, n: int = 15) -> str:
+    rows, hdr = [], None
+    for ln in text.splitlines():
+        if not ln.startswith("|"):
+            continue
+        cells = [x.strip() for x in ln.strip().strip("|").split("|")]
+        if hdr is None and "Paths" in cells and "Slack" in cells:
+            hdr = cells
+            continue
+        if hdr and len(cells) == len(hdr) and cells[0].startswith("Path #"):
+            rows.append(dict(zip(hdr, cells)))
+    out = [" | ".join(DA_COLS)] + [" | ".join(r.get(k, "")[:90] for k in DA_COLS) for r in rows[:n]]
+    i = text.find("Logic Level Distribution")
+    j = text.find("Logic Level Distribution", i + 10)
+    if j > 0:
+        lld = [ln for ln in text[j:].splitlines()[:14] if ln.startswith("|")]
+        out += ["", "Logic level distribution:"] + lld
+    return "\n".join(out)
+
+
 def report_excerpts(c: Campaign, did: str) -> str:
     d = c.profile_dir(did)
     out = []
     ts = _read(d / "timing_summary.txt")
     out.append("### timing summary\n" + _section(ts, "Design Timing Summary", 12)
                + "\n" + _section(ts, "Clock Summary", 12))
-    da = _strip_header(_read(d / "design_analysis.txt"))
-    out.append("### report_design_analysis -timing -logic_level_distribution (excerpt)\n"
-               + "\n".join(da.splitlines()[:70]))
+    out.append("### report_design_analysis: setup path characteristics (top 15, key columns)\n"
+               + design_analysis_compact(_read(d / "design_analysis.txt")))
     ut = _strip_header(_read(d / "utilization.txt"))
     keep = [ln for ln in ut.splitlines() if ln.startswith("|") and
             re.search(r"CLB LUTs|CLB Registers|CARRY8|F7|F8|LUT as Memory|Block RAM Tile|URAM|DSPs|BUFG", ln)]

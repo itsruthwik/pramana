@@ -52,6 +52,8 @@ SCHEMA = {
     "required": ["diagnosis", "cuts", "proposals", "hypotheses"],
 }
 
+KEEP_FRACTION = 0.3
+
 SYSTEM = ("You are an expert in AMD Vivado post-route timing closure on UltraScale+. You reason "
           "from the evidence given, cite it, and never invent measurements.")
 
@@ -67,7 +69,12 @@ choices as FACTORS. Decide which factors are worth searching on this design.
   will measure whether your cuts were right. Cut aggressively where the evidence says a
   factor has nothing to act on (e.g. a pass that optimised 0 cells under Explore, no DSP/BRAM
   on critical paths, runtime-only or quality-reducing choices like Quick/RuntimeOptimized/
-  -no_timing_driven), keep where there's a plausible mechanism. Typically keep 15-35% of factors.
+  -no_timing_driven), keep where there's a plausible mechanism.
+- BUDGET: there are {n_total} factors; keep AT MOST {n_keep} (cut at least {n_cut}). The
+  search can only afford to explore a small subspace, so rank by expected value on THIS
+  design and cut the rest; low-value-but-plausible factors should be cut (audits will catch
+  real mistakes). For option values with levels (low/med/high), keep only the levels you
+  would actually try.
 - Cutting a whole command: use the bare command factor (e.g. "opt").
 - Use factor names EXACTLY as listed in "Factors".
 - `confidence` in [0,1] = probability the cut is right (the factor would not give the best
@@ -176,6 +183,7 @@ def validate(spec: dict, out: dict, prev_cuts: set[str] | None = None) -> dict:
 def prune_design(c: Campaign, did: str, rnd: int, start: dict, extra: str = "",
                  prev: dict | None = None) -> dict:
     spec = c.spec()
+    n_total = len(space.all_factors(spec))
     lineage = " > ".join(c.lineage(did, start["id"])) or "(input DCP, unmodified)"
     prompt = "\n\n".join([
         evidence.design_brief(c, did),
@@ -184,7 +192,8 @@ def prune_design(c: Campaign, did: str, rnd: int, start: dict, extra: str = "",
         evidence.space_brief(spec),
         "## Factors\n" + factors_by_command(spec),
         f"## Start state for proposals\nstate {start['id']}: WNS {start['wns']} ns, reached by: {lineage}",
-        INSTRUCTIONS,
+        INSTRUCTIONS.format(n_total=n_total, n_keep=int(n_total * KEEP_FRACTION),
+                            n_cut=n_total - int(n_total * KEEP_FRACTION)),
     ])
     out = llm.ask(c.cfg, "prune", f"{did}_r{rnd}", prompt, SCHEMA, system=SYSTEM)
     if out is None:
