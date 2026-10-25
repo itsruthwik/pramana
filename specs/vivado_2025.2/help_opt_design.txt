@@ -1,0 +1,355 @@
+opt_design
+
+Description: 
+Optimize the current netlist. This will perform the retarget, propconst, sweep and bram_power_opt optimizations by default.
+
+Syntax: 
+opt_design  [-retarget] [-propconst] [-sweep] [-bram_power_opt] [-remap]
+            [-aggressive_remap] [-resynth_remap] [-resynth_area]
+            [-resynth_seq_area] [-directive <arg>] [-muxf_remap]
+            [-hier_fanout_limit <arg>] [-bufg_opt] [-mbufg_opt]
+            [-shift_register_opt] [-dsp_register_opt] [-srl_remap_modes <arg>]
+            [-control_set_merge] [-control_set_opt] [-merge_equivalent_drivers]
+            [-carry_remap] [-memory_opt] [-property_opt_only] [-quiet]
+            [-verbose]
+
+Usage: 
+  Name                         Description
+  ----------------------------------------
+  [-retarget]                  Retarget
+  [-propconst]                 Propagate constants across leaf-level 
+                               instances
+  [-sweep]                     Remove unconnected leaf-level instances
+  [-bram_power_opt]            Perform Block RAM power optimizations
+  [-remap]                     Remap logic optimally in LUTs
+  [-aggressive_remap]          High effort remap optimization
+  [-resynth_remap]             High effort re-synthesis to reduce the depth 
+                               of logic in critical timing paths
+  [-resynth_area]              Resynthesis
+  [-resynth_seq_area]          Resynthesis (with Sequential optimizations)
+  [-directive]                 Mode of behavior (directive) for this command.
+                               Please refer to Arguments section of this help
+                               for values for this option
+                               Default: Default
+  [-muxf_remap]                Optimize all MuxFx cells to LUT3
+  [-hier_fanout_limit]         Replicate by module with threshold N
+  [-bufg_opt]                  Insert, Merge and Split BUFGs
+  [-mbufg_opt]                 Merge BUFGs to MBUFGs
+  [-shift_register_opt]        Pull register stage from shift register
+  [-dsp_register_opt]          Push/Pull Registers out of a DSP
+  [-srl_remap_modes]           Remap shift registers to flops or flops to 
+                               shift registers
+  [-control_set_merge]         Merge all equivalent control set drivers to a 
+                               single driver
+  [-control_set_opt]           Optimize control set, Versal only
+  [-merge_equivalent_drivers]  Merge all LUT,Flop equivalent driver 
+                               replications
+  [-carry_remap]               Remap carries into luts
+  [-memory_opt]                Perform Memory optimization on underutilized 
+                               XPM memories
+  [-property_opt_only]         Do targeted optimizations on tagged cells
+  [-quiet]                     Ignore command errors
+  [-verbose]                   Suspend message limits during command 
+                               execution
+
+Categories: 
+Tools
+
+Description:
+
+  Optimizes a design netlist for the target part. Optimization provides
+  improvements to synthesized netlists from third-party tools or for netlists
+  that are not optimized during synthesis.
+
+  Run this command after synthesis but prior to implementation optimize the
+  design and simplify the netlist before placing and routing the design.
+  Assign the DONT_TOUCH property to prevent the optimization of individual
+  cells.
+
+  Tip: To see what actions opt_design is taking in optimizing your design,
+  you can use the -verbose option to get a more detailed transcript of the
+  process. This helps you in understanding and debugging some of the changes
+  made to your design.
+
+  The opt_design command performs the following optimizations by default:
+
+   *  Retarget
+
+   *  Constant Propagation
+
+   *  Sweep
+
+   *  Global Buffer (BUFG) optimizations
+
+   *  DSP Register optimizations
+
+   *  Shift-Register Logic optimizations
+
+   *  Block RAM Power optimizations
+
+   *  Implement MIG cores
+
+   *  Implement Debug cores
+
+  Important: Using command-line options for specific optimizations results in
+  opt_design performing only the specified optimizations and disabling all
+  others, even the ones that are usually performed by default.
+
+  To perform LUT Remapping, you must specify -remap.
+
+  To perform area-based re-synthesis, you must specify -resynth_area, or
+  -directive ExploreArea.
+
+  To perform sequential area-based re-synthesis, you must specify
+  -resynth_seq_area, or -directive ExploreSequentialArea.
+
+Arguments:
+
+  -retarget - (Optional) Retarget one type of block to another when
+  retargetting the design from one device family to another. For example,
+  retarget instantiated MUXCY or XORCY components into a CARRY4 block; or
+  retarget DCM to MMCM. The retarget optimization also absorbs inverters into
+  downstream logic where possible.
+
+  Note: The -retarget argument is optional, as are the other optimizations.
+  However this optimization is run by default unless explicitly overridden by
+  another optimization.
+
+  -propconst - (Optional) Propagate constant inputs through the circuit,
+  resulting in a simplified netlist. Propagation of constants can eliminate
+  redundant combinational logic from the netlist.
+
+  -sweep - (Optional) Remove unnecessary logic, removing loadless cells and
+  nets. Additional optimization can be performed such as tie-off, register
+  replication driving multiple OBUF, IBUF/OBUF insertion, retargeting dual
+  port RAM to single port RAM, and optimizing IDELAYCTRL by grouping IO.
+
+  -bram_power_opt - (Optional) Enables power optimization on Block RAM cells.
+  Changes the WRITE_MODE on unread ports of true dual-port RAMs to NO_CHANGE,
+  and applies intelligent clock gating to Block RAM outputs.
+
+  Note: Specific Block RAM cells can be excluded from this optimization using
+  the set_power_opt command.
+
+  -remap - (Optional) Remap the design to combine multiple LUTs into a single
+  LUT to reduce the depth of the logic.
+
+  -aggressive_remap - (Optional) Similar to the -remap option to reduce LUT
+  logic depth but more exhaustive. This may reduce more LUT levels at the
+  expense of longer optimization runtime.
+
+  -resynth_area - (Optional) Perform re-synthesis in area mode to reduce the
+  number of LUTs.
+
+  -resynth_seq_area - (Optional) Perform re-synthesis to reduce both
+  combinational and sequential logic. Performs a superset of the optimization
+  provided by -resynth_area.
+
+  -resynth_remap - (Optional) Remap the design to improve the critical paths
+  in timing-driven mode by performing re-synthesis to reduce the depth of
+  logic. This timing-based approach replicates LUTs with fanout and collapse
+  smaller LUT's into bigger functions at the expense of longer optimization
+  runtime.
+
+  -directive <arg> - (Optional) Direct the mode of optimization with specific
+  design objectives. Only one directive can be specified for a single
+  opt_design command, and values are case-sensitive. Supported values
+  include:
+
+   *  Explore - Run additional optimizations to improve results.
+
+   *  ExploreArea - Run Explore with resynth_area, to reduce the number of
+      LUTs.
+
+   *  ExploreWithRemap - Run Explore with aggresive_remap optimization to
+      compress logic levels.
+
+   *  ExploreSequentialArea - Run Explore with resynth_seq_area optimization
+      to reduce registers and related combinational logic.
+
+   *  RuntimeOptimized - Runs Default without bram_power_opt. Run the fewest
+      optimizations, trading optimization results for faster runtime.
+
+   *  RQS - Instructs opt_design to select the opt_design directive specified
+      by the report_qor_suggestion strategy suggestion. Requires an RQS file
+      with a strategy suggestion to be read in prior to calling this
+      directive. See report_qor_suggestions -help for more details.
+
+   *  Default - Run the default optimization.
+
+  Refer to the Vivado Design Suite User Guide: Implementation (UG904) for
+  more information on the effects of each directive.
+
+  Note: The -directive option controls the overall optimization strategy, and
+  is not compatible with any specific optimization options. It can only be
+  used with -quiet and -verbose.
+
+  -muxf_remap - (Optional) Convert MUXFs to LUT3s opportunistically when it
+  can potentially improve route-ability of the design without affecting
+  timing.
+
+  -hier_fanout_limit <arg> - (Optional) Net drivers with fanout greater than
+  the specified limit (<arg>) is replicated according to the logical
+  hierarchy. For each hierarchical instance driven by the high-fanout net, if
+  the fanout within the hierarchy is greater than the specified limit, then
+  the net within the hierarchy is driven by a replica of the driver of the
+  high-fanout net. The minimum value for hier_fanout_limit is 512.
+
+  -bufg_opt - (Optional) Perform various optimizations related to global
+  buffers (BUFG/BUFGCE): Insert a buffer on unbuffered clock nets (fanout >
+  30). Insert BUFGs on high fanout nets where the control set pin count on
+  the net exceeds the tool threshold. Perform load-splitting when a
+  high-fanout net drives both combinational and sequential logic: the
+  combinational portion bypasses the BUFG because the added delay is too
+  large.
+
+  Tip: The phys_opt_design command can be used to optimize the combinational
+  portion, while the sequential portion can be driven by BUFG.
+
+  -mbufg_opt - (Optional) MBUFG optimization transforms parallel clock
+  buffers driven by a common driver, or clock modifying blocks (CMB) such as
+  MMCM, DPLL, or XPLL, to MBUFG.
+
+  -shift_register_opt - (Optional) For high-fanout nets originating from an
+  SRL, add output register pipeline stages to improve timing prior to the
+  high-fanout net replication. This optimization is performed as part of the
+  default optimization.
+
+  -dsp_register_opt - (Optional) Pull registers out of a DSP, or push
+  registers into a DSP, to improve timing and resource utilization as needed.
+  This optimization is performed as part of the default optimization.
+
+  -srl_remap_modes <args> - (Optional) Many designs have timing closure
+  issues related to deep SRLs, and long register chains. This option provides
+  both an automatic rule to trigger remapping between FF chains and SRLs, and
+  also a manual rule to specify when to convert a FF chain to an SRL, or an
+  SRL to a FF chain. Automatic remapping starts with the longest FF chains
+  and converts those to SRLs when needed to reduce FF utilization, and takes
+  the shallowest SRLs and converts those to FF chains when needed to reduce
+  LUT utilization. Manual remapping takes FF chains in excess of specified
+  lengths and remaps them to SRLs, and takes SRLs with specified depths and
+  remaps them to FF chains. The automatic and manual modes cannot both be
+  used in the same opt_design command pass. The following shows the syntax
+  for the automatic and manual rules:
+
+   *  Automatic:
+
+       -  -srl_remap_modes {{target_ff_util <util> target_lutram_util
+          <util>}}: Where <util> is a number from 0 to 100 expressed as a
+          percentage of utilization. When either FF or LUTs exceed the
+          specified utilization, the tool remaps as needed. When both
+          utilization rates are exceeded neither is remapped.
+
+   *  Manual:
+
+       -  -srl_remap_modes {{min_depth_ffs_to_srl <val>}{max_depth_srl_to_ffs
+          <val>}}: Where <val> specifies the depth of an SRL or length of a
+          FF chain. When a FF chain is greater than the specified min value,
+          the chain is remapped to an SRL with the required depth. If an SRL
+          has depth less than or equal to the specified max value, the SRL is
+          remapped to a FF chain.
+
+  -control_set_merge - (Optional) Reduce the drivers of logically-equivalent
+  control signals to a single driver. This is like a reverse fanout
+  replication, and results in nets that are better suited for module-based
+  replication.
+
+  -control_set_opt - (Optional) Reduce the control set structure complexity
+  and provide more flexibility to placer by converting smaller control sets
+  into bigger group. This switch introduce new LUT logic in front of flop D
+  pins to preserve functionality. The optimization is enabled by default in
+  all explore strategies.
+
+    Explore/ExploreArea/ExploreSequentialArea/ExploreWithRemap
+
+  -merge_equivalent_drivers - (Optional) This option merges equivalent
+  drivers on both control signals and non-control signals, to reduce logic in
+  the design.
+
+  -carry_remap - (Optional) Remap carry signals into LUTs.
+
+  -property_opt_only - (Optional) Indicates that the opt_design command
+  should be driven only by properties on objects in the design, and not by
+  the options defined as part of the command syntax. Refer to the Vivado
+  Design Suite Properties Reference Guide (UG912) for more information on
+  specific properties. The following properties trigger property-only
+  optimizations: CARRY_REMAP, CONTROL_SET_REMAP, EQUIVALENT_DRIVER_OPT,
+  LUT_REMAP, MUXF_REMAP, REG_TO_SRL, SRL_STAGES_TO_REG_INPUT,
+  SRL_STAGES_TO_REG_OUTPUT, SRL_TO_REG.
+
+  Tip: When -property_opt_only is specified, the tool returns an error if
+  additional optimizations have been specified in the opt_design command.
+
+  -quiet - (Optional) Execute the command quietly, returning no messages from
+  the command. The command also returns TCL_OK regardless of any errors
+  encountered during execution.
+
+  Note: Any errors encountered on the command-line, while launching the
+  command, will be returned. Only errors occurring inside the command will be
+  trapped.
+
+  -verbose - (Optional) Temporarily override any message limits and return
+  all messages from this command. This option displays detailed information
+  about the logic that is affected by each optimization.
+
+Examples:
+
+  The following example performs all four default optimizations: retarget,
+  constant propagation, sweep, and Block RAM power optimization. The command
+  returns detailed results with the -verbose switch:
+
+    opt_design -verbose
+
+  This example excludes specific Block RAM cells from power optimization
+  using the set_power_opt command, and then runs opt_design with the four
+  default optimizations:
+
+    set_power_opt -exclude_cells [get_cells \
+       -filter {PRIMITIVE_TYPE =~ BMEM.*.*} \
+       -of_objects [get_pins -leaf -filter {DIRECTION == IN} \
+       -of_objects [get_nets -of_objects [get_pins clock/bufgctrl_clk_mld/O]]]]
+    opt_design
+
+  The following example performs the sweep and retarget optimizations:
+
+    opt_design -sweep -retarget
+
+  Note: Because -sweep and -retarget are expressly enabled in the prior
+  example, -propconst optimization and -bram_power_opt are implicitly
+  disabled.
+
+  The following example directs the opt_design command to use various
+  algorithms to achieve potentially better results:
+
+    opt_design -directive Explore
+
+  The following example directs the opt_design command to use various
+  algorithms to achieve potentially better results, while focusing on area
+  reduction:
+
+    opt_design -directive ExploreArea
+
+  This example uses the -srl_remap_modes argument with the automatic option
+  to convert FF chains into SRLs when FF utilization is greater than 20%, or
+  SRLs into FF chains when SRL utilization is over 50%:
+
+    -srl_remap_modes {{target_ff_util 20 target_lutram_util 50}}
+
+  Tip: In this case, the srl_remap is only performed if either specified
+  utilization rate is exceeded, but NOT if both are exceeded.
+
+  The following example uses the -srl_remap_modes argument with the manual
+  option to convert FF chains with length greater than 5 to SRLs, and SRLs
+  with depth less than or equal to 8 to FF chains:
+
+    -srl_remap_modes {{min_depth_ffs_to_srl 5}{max_depth_srl_to_ffs 8}}
+
+See Also:
+
+   *  phys_opt_design
+   *  place_design
+   *  power_opt_design
+   *  route_design
+   *  set_power_opt
+   *  synth_design
+

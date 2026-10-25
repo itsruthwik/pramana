@@ -1,0 +1,329 @@
+route_design
+
+Description: 
+Route the current design
+
+Syntax: 
+route_design  [-unroute] [-release_memory] [-nets <args>] [-physical_nets]
+              [-pins <arg>] [-directive <arg>] [-tns_cleanup]
+              [-no_timing_driven] [-preserve] [-delay] [-auto_delay]
+              -max_delay <arg> -min_delay <arg> [-timing_summary] [-finalize]
+              [-ultrathreads] [-eco] [-no_psir] [-quiet] [-verbose]
+
+Usage: 
+  Name                 Description
+  --------------------------------
+  [-unroute]           Unroute whole design or the given nets/pins if used 
+                       with -nets or -pins.
+  [-release_memory]    Release Router memory. Not compatible with any other 
+                       options.
+  [-nets]              Operate on the given nets.
+  [-physical_nets]     Operate on all physical nets.
+  [-pins]              Operate on the given pins.
+  [-directive]         Mode of behavior (directive) for this command. Please 
+                       refer to Arguments section of this help for values for
+                       this option.
+                       Default: Default
+  [-tns_cleanup]       Do optional TNS clean up.
+  [-no_timing_driven]  Do not run in timing driven mode.
+  [-preserve]          Preserve existing routing.
+  [-delay]             Use with -nets or -pins option to route in delay 
+                       driven mode.
+  [-auto_delay]        Use with -nets or -pins option to route in constraint 
+                       driven mode.
+  -max_delay           Use with -pins option to specify the max_delay 
+                       constraint on the pins.When specified -delay is 
+                       implicit.
+  -min_delay           Use with -pins option to specify the max_delay 
+                       constraint on the pins.When specified -delay is 
+                       implicit.
+  [-timing_summary]    Enable post-router signoff timing summary.
+  [-finalize]          finalize route_design in interactive mode.
+  [-ultrathreads]      Enable Turbo mode routing.
+  [-eco]               runs incremental router if there was eco modification 
+                       on routed netlist.
+  [-no_psir]           skips Physical Synthesis in Router phase.
+  [-quiet]             Ignore command errors
+  [-verbose]           Suspend message limits during command execution
+
+Categories: 
+Tools
+
+Description:
+
+  Route the nets in the current design to complete logic connections on the
+  target part.
+
+  Predefined routing strategies can be quickly selected using the
+  route_design -directive command, or specific route options can be
+  configured to define your own routing strategy.
+
+  Routing can be completed automatically with route_design, or can be
+  completed iteratively using the various options of the route_design command
+  to achieve route completion and timing closure. Iterative routing provides
+  you some control over the routing process to route critical nets first and
+  then route less critical nets, and to control the level of effort and the
+  timing algorithms for these various route passes.
+
+  Routing is one step of the complete design implementation process, which
+  can be run automatically through the use of the launch_runs command when
+  running the Vivado tools in Project Mode.
+
+  In Non-Project Mode, the implementation process must be run manually with
+  the individual commands: opt_design, place_design, phys_opt_design,
+  power_opt_design, and route_design. Refer to the Vivado Design Suite User
+  Guide: Design Flows Overview (UG892) for a complete description of Project
+  Mode and Non-Project Mode.
+
+  Tip: The route_design can be multi-threaded to speed the process. Refer to
+  the set_param command for more information on setting the
+  general.maxThreads parameter.
+
+  Both placement and routing can be completed incrementally, based on prior
+  results stored in a Design Checkpoint file (DCP), using the incremental
+  implementation flow. Refer to the read_checkpoint command, or to Vivado
+  Design Suite User Guide: Implementation (UG904) for more information on
+  incremental place and route.
+
+  This command requires a placed design, and it is recommended that you have
+  optimized the design with opt_design prior to placement.
+
+Arguments:
+
+  -unroute <arg> - (Optional) Unroute nets in the design. If no arguments are
+  specified, all nets in the design are unrouted. The route_design command
+  will not route any nets when the -unroute option is specified.
+
+   *  Combine with the -nets option to limit unrouting to a list of nets.
+
+   *  Combine with the -pins option to unroute from a specified pin to the
+      nearest branch of the net.
+
+   *  Combine with the -physical_nets option to unroute all logic 1 and logic
+      0 nets.
+
+  -release_memory - (Optional) Free router memory resources for subsequent
+  route passes. This option does not run route passes, but only releases
+  memory held by the router to reduce router initialization. The router will
+  need to reload design data for subsequent route passes.
+
+  -nets <args> - (Optional) Route or unroute only the specified net objects.
+  Net objects must be specified using the get_nets command.
+
+  Tip: The router uses a quick route approach to find a routing solution for
+  the specified nets, ignoring timing delays, when routing with -nets,
+  -physical_nets, or -pins specified. Use -delay to find a route with the
+  shortest delay.
+
+  -physical_nets - (Optional) Route or unroute only logic zero and logic one
+  nets.
+
+  -pins <args> - (Optional) Route or unroute to the specified pins, which
+  must be input pins. If a specified pin is driven by a multiple fanout net,
+  only the route segment between the net and pin is affected.
+
+  -directive <arg> - (Optional) Direct routing to achieve specific design
+  objectives. Only one directive can be specified for a single route_design
+  command, and values are case-sensitive. Supported values are:
+
+   *  Explore - Causes the Vivado router to explore different critical path
+      routes based on timing, after an initial route.
+
+   *  AggressiveExplore - Directs the router to further expand its
+      exploration of critical path routes while maintaining original timing
+      budgets. The router runtime might be significantly higher compared to
+      the Explore directive as the router uses more aggressive optimization
+      thresholds to attempt to meet timing constraints.
+
+   *  NoTimingRelaxation - Prevents the router from relaxing timing to
+      complete routing. If the router has difficulty meeting timing, it will
+      run longer to try to meet the original timing constraints.
+
+   *  MoreGlobalIterations - Uses detailed timing analysis throughout all
+      stages instead of just the final stages, and will run more global
+      iterations even when timing improves only slightly.
+
+   *  HigherDelayCost - Adjusts the router`s internal cost functions to
+      emphasize delay over iterations, allowing a trade-off of runtime for
+      better performance.
+
+   *  AdvancedSkewModeling - Uses more accurate skew modeling throughout all
+      routing stages which may improve design performance on higher-skew
+      clock networks.
+
+   *  AlternateCLBRouting - (UltraScale only) Chooses alternate routing
+      algorithms that require extra runtime but may help resolve routing
+      congestion.
+
+   *  RuntimeOptimized - Run fewest iterations, trade higher design
+      performance for faster runtime.
+
+   *  Quick - Absolute fastest runtime, non-timing-driven, performs the
+      minimum required routing for a legal design.
+
+   *  Default - Run route_design with default settings.
+
+  Important: The -directive option controls the overall routing strategy, and
+  is not compatible with any specific route_design options, except -preserve
+  and -tns_cleanup. It can also be used with -quiet and -verbose. Only the
+  Explore, Quick, and Default directives are compatible with high reuse
+  designs and the incremental implementation flow as defined by
+  read_checkpoint -incremental. Refer to the Vivado Design Suite User Guide:
+  Implementation (UG904) for more information on the use of the -directive
+  option.
+
+  -tns_cleanup - (Optional) By default, to reduce runtime, the router focuses
+  on optimizing the Worst Negative Slack (WNS) path as opposed to Total
+  Negative Slack (TNS) paths. This option invokes an optional phase at the
+  end of routing where the router attempts to fix the TNS paths, those
+  failing paths other than the WNS path. This option may reduce TNS at the
+  cost of added runtime, but will not affect WNS. The -tns_cleanup option is
+  recommended when using post-route phys_opt_design to ensure that
+  optimization focuses on the WNS path and does not waste effort on TNS paths
+  that can be fixed by the router. This option can be used in combination
+  with -directive.
+
+  -no_timing_driven - (Optional) Disables the default timing driven routing
+  algorithm. This results in faster routing results, but ignores any timing
+  constraints during the routing process.
+
+  -preserve - (Optional) Existing completed routes will be preserved and not
+  subject to the rip-up and reroute phase. This does not apply to routing
+  that is fixed using the IS_ROUTE_FIXED or FIXED_ROUTE properties, which is
+  not subject to being rerouted. Routing is preserved only for the current
+  route_design command.
+
+  Tip: Partially routed nets are subject to rerouting to complete the
+  connection. If you want to preserve the routing of a partially routed net,
+  you should apply the FIXED_ROUTE property to the portion of the route you
+  want to preserve.
+
+  -delay - (Optional) Can only be used in combination with the -nets or -pins
+  options. By default nets are routed to achieve the fastest routing runtime,
+  ignoring timing constraints, when using -nets and -pins options. The -delay
+  option directs the router to try to achieve the shortest routed
+  interconnect delay, but still ignores timing constraints.
+
+  Important: You can specify multiple nets to route at the same time using
+  the -delay option, but this can result in conflicts for routing resources.
+  The Vivado router may create node overlap errors if the nets are in close
+  proximity to each other because the -delay option will reuse routing
+  resources to achieve the shortest routes for all specified nets. Therefore
+  it is recommended to route nets and pins individually using the -delay
+  option, beginning with the most critical.
+
+  -auto_delay - (Optional) Can only be used in combination with the -nets or
+  -pins options. It is recommended to use the -auto_delay option on a placed
+  design, and limit the specified number of nets or pins to less than 100.
+  The -auto_delay option directs the router to prioritize setup and hold
+  critical paths using the defined timing constraints.
+
+  -max_delay <arg> - (Optional) Can only be used with -pins. Directs the
+  router to try to achieve an interconnect delay less than or equal to the
+  specified delay given in picoseconds. When this options is specified, the
+  -delay option is implied.
+
+  Note: The -max_delay and -min_delay options specify the delay limits for
+  the interconnect only, not the logic or intra-site delay. The router
+  attempts to satisfy the delay restrictions on the interconnect.
+
+  -min_delay <arg> - (Optional) Can only be used with -pins. Directs the
+  router to try to achieve an interconnect delay greater than or equal to the
+  specified delay given in picoseconds. When this option is specified, the
+  -delay option is implied.
+
+  -timing_summary - (Optional) By default, the router outputs a final timing
+  summary to the log, based on Vivado router internal estimated timing which
+  might differ slightly from the actual routed timing due to pessimism in the
+  delay estimates. The -timing_summary option forces the router to launch the
+  Vivado static timing analyzer to report the timing summary based on actual
+  routed delays, but incurs additional run time for the static timing
+  analysis. The timing summary consists of the Worst Negative Slack (WNS),
+  Total Negative Slack (TNS), Worst Hold Slack (WHS), and Total Hold Slack
+  (THS). The values are identical to that of report_timing_summary when run
+  on the post-route design.
+
+  Tip: The Vivado static timing analyzer is also launched by the -directive
+  Explore option.
+
+  -finalize - (Optional) When routing interactively you can specify
+  route_design -finalize to complete any partially routed connections.
+
+  -ultrathreads - (Optional) Reduces router runtime at the expense of
+  repeatability. This option enables the router to run faster, but there will
+  be some variation in routing results between otherwise identical runs.
+
+  -eco - (Optional) Run router in incremental mode when there is an eco
+  modification. When in incremental mode, as well as routing new nets, the
+  router can modify existing nets to improve routability and the ability to
+  meet timing. This option can be called by itself, or it can be used with
+  the -no_timing_driven switch or the Quick directive. These options run the
+  router with timing off for a faster result.
+
+  -no_psir - (Optional) Disables Physical Synthesis In Router (PSIR)
+  optimization during route. By default, Vivado router performs interconnect
+  retiming and clock, critical pin, LUT restructure, placement, and routing
+  optimizations to improve delay.
+
+  -quiet - (Optional) Execute the command quietly, returning no messages from
+  the command. The command also returns TCL_OK regardless of any errors
+  encountered during execution.
+
+  Note: Any errors encountered on the command-line, while launching the
+  command, will be returned. Only errors occurring inside the command will be
+  trapped.
+
+  -verbose - (Optional) Temporarily override any message limits and return
+  all messages from this command.
+
+  Note: Message limits can be defined with the set_msg_config command.
+
+Examples:
+
+  Route the entire design, and direct the router to try multiple algorithms
+  for improving critical path delay:
+
+    route_design -directive Explore
+
+  The following example routes the set of timing critical nets,
+  $criticalNets, to the shortest interconnect delay, marks the nets as fixed
+  using the IS_ROUTE_FIXED property, and then routes the rest of the design
+  using a low effort directive for fast results:
+
+    route_design -delay -nets $criticalNets
+    set_property IS_ROUTE_FIXED 1 $criticalNets
+    route_design -directive RuntimeOptimized
+
+  Route the specified nets using the fastest runtime:
+
+    route_design -nets [get_nets ctrl0/ctr*]
+
+  Route the specified nets to get the shortest interconnect delays:
+
+    route_design -nets [get_nets ctrl0/ctr*] -delay
+
+  Route to the specified pins:
+
+    route_design -pins [get_pins ctrl0/reset_reg/D ctrl0/ram0/ADDRARDADDR]
+
+  Route to a particular pin, try to achieve less than 500 ps delay:
+
+    route_design -pins [get_pins ctrl0/reset_reg/D] -max_delay 500
+
+  Route to a particular pin, try to achieve more than 200 ps delay:
+
+    route_design -pins [get_pins ctrl0/ram0/ADDRARDADDR] -min_delay 200
+
+See Also:
+
+   *  get_nets
+   *  get_pins
+   *  launch_runs
+   *  opt_design
+   *  phys_opt_design
+   *  place_design
+   *  power_opt_design
+   *  read_checkpoint
+   *  set_property
+   *  write_checkpoint
+

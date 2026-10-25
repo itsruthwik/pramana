@@ -1,0 +1,372 @@
+phys_opt_design
+
+Description: 
+Optimize the current placed netlist.
+
+Syntax: 
+phys_opt_design  [-fanout_opt] [-placement_opt] [-routing_opt]
+                 [-slr_crossing_opt] [-insert_negative_edge_ffs]
+                 [-restruct_opt] [-interconnect_retime] [-lut_opt] [-casc_opt]
+                 [-cell_group_opt] [-equ_drivers_opt] [-critical_cell_opt]
+                 [-dsp_register_opt] [-bram_register_opt] [-uram_register_opt]
+                 [-bram_enable_opt] [-shift_register_opt] [-hold_fix]
+                 [-aggressive_hold_fix] [-retime]
+                 [-force_replication_on_nets <args>] [-directive <arg>]
+                 [-critical_pin_opt] [-clock_opt] [-path_groups <args>]
+                 [-tns_cleanup] [-sll_reg_hold_fix] [-memory_rewire_opt]
+                 [-quiet] [-verbose]
+
+Usage: 
+  Name                          Description
+  -----------------------------------------
+  [-fanout_opt]                 Do cell-duplication based optimization on 
+                                high-fanout timing critical nets
+  [-placement_opt]              Do placement based optimization on timing 
+                                critical nets
+  [-routing_opt]                Do routing based optimization on timing 
+                                critical nets
+  [-slr_crossing_opt]           Do placement optimization of SLR-crossing 
+                                timing critical nets
+  [-insert_negative_edge_ffs]   Insert negative edge triggered FFs for hold 
+                                optimization
+  [-restruct_opt]               Do LUT restructuring optimization
+  [-interconnect_retime]        Do interconnect retiming optimization
+  [-lut_opt]                    Do single LUT replacement/replication 
+                                optimization
+  [-casc_opt]                   Do LUT cascade placement/replication 
+                                optimization
+  [-cell_group_opt]             Do critical cell group optimization
+  [-equ_drivers_opt]            Rewiring load pins to equivalent drivers
+  [-critical_cell_opt]          Do cell-duplication based optimization on 
+                                timing critical nets
+  [-dsp_register_opt]           Do DSP register optimization
+  [-bram_register_opt]          Do BRAM register optimization
+  [-uram_register_opt]          Do UltraRAM register optimization
+  [-bram_enable_opt]            Do BRAM enable optimization
+  [-shift_register_opt]         Do Shift register optimization
+  [-hold_fix]                   Attempt to improve slack of high hold 
+                                violators
+  [-aggressive_hold_fix]        Attempt to aggressively improve slack of high
+                                hold violators
+  [-retime]                     Do retiming optimization
+  [-force_replication_on_nets]  Force replication optimization on nets
+  [-directive]                  Mode of behavior (directive) for this 
+                                command. Please refer to Arguments section of
+                                this help for values for this option
+                                Default: Default
+  [-critical_pin_opt]           Do pin-swapping based optimization on timing 
+                                critical nets
+  [-clock_opt]                  Do clock skew optimization in post-route 
+                                optimization
+  [-path_groups]                Work only on specified path groups
+  [-tns_cleanup]                Work on all nets in the design that meet 
+                                criteria for the specified optimizations to 
+                                improve design tns
+  [-sll_reg_hold_fix]           Do hold fixing on SLL Tx-Rx paths
+  [-memory_rewire_opt]          Do memory pin-swapping based optimization on 
+                                timing critical nets
+  [-quiet]                      Ignore command errors
+  [-verbose]                    Suspend message limits during command 
+                                execution
+
+Categories: 
+Tools
+
+Description:
+
+  Performs timing-driven optimization on the negative-slack paths of a
+  design. A path should have negative slack near the worst negative slack
+  (WNS) to be considered for optimization. Optimization will not be performed
+  on designs without negative slack.
+
+  This optional command can be run for post-place or post-route optimizations.
+
+  Note: Because physical optimization requires timing data that is only
+  available after placement, the command cannot be run prior to placement.
+  However, the write_iphys_opt_tcl and read_iphys_opt_tcl commands let you
+  write out the physical optimizations performed on the post-placed design,
+  and then apply those optimizations to the design netlist prior to
+  placement. Refer to the Vivado Design Suite User Guide: Implementation
+  (UG904) for more information on interactive physical optimization.
+
+  Post-place phys_opt_design performs the following optimizations by default:
+
+   *  high-fanout optimization
+
+   *  placement-based optimization of critical paths
+
+   *  LUT restructure optimization
+
+   *  critical-cell optimization
+
+   *  DSP register optimization
+
+   *  Block RAM register optimization
+
+   *  URAM register optimization
+
+   *  a final fanout optimization
+
+  Tip: Using command-line options for specific optimizations results in
+  phys_opt_design performing only the specified optimizations and disabling
+  all others, even the ones that are usually performed by default.
+
+  Post-route phys_opt_design performs the following optimizations by default:
+
+   *  placement-based optimization of critical paths
+
+   *  routing optimization
+
+   *  LUT restructure optimization
+
+   *  critical-cell optimization
+
+  Physical optimizations involve replication, re-timing, hold fixing, and
+  placement improvement. The phys_opt_design command automatically performs
+  all necessary netlist and placement changes.
+
+  To perform re-timing you must specify the -retime option, or the -directive
+  AddRetime option.
+
+  To perform hold fixing you must specify the -hold_fix option, or the
+  -directive ExploreWithHoldFix option.
+
+  If the phys_opt_design command is used iteratively, the subsequent run
+  optimizes the results of the prior run.
+
+  Tip: The phys_opt_design can be multi-threaded to speed the process. Refer
+  to the set_param command for more information on setting the
+  general.maxThreads parameter.
+
+  The command reports each net processed, a summary of any optimizations
+  performed, and the WNS before and after optimization. Replicated objects
+  are named by appending _replica to the original object name, followed by
+  the replicated object count.
+
+Arguments:
+
+  -fanout_opt - (Optional) Performs delay-driven optimization on high-fanout
+  timing critical nets, by replicating drivers to reduce delay. This is not
+  applicable for Versal adaptive SoC devices.
+
+  Note: The -fanout_opt argument is optional, as are the other optimizations.
+  However this optimization is run by default unless explicitly overridden by
+  another optimization.
+
+  -placement_opt - (Optional) Moves cells to reduce delay on timing-critical
+  nets. This is not applicable for Versal adaptive SoC devices.
+
+  -memory_rewire_opt - (Optional) Performs rewiring of critical signals to
+  faster pins of BRAM/URAM. Not applicable for cascaded and ECC enabled
+  memories. This is applicable to Versal adaptive SoC devices only.
+
+  -routing_opt - (Optional) Performs routing optimization on timing-critical
+  nets to reduce delay.
+
+  -slr_crossing_opt - (Optional) Performs post-place or post-route
+  optimizations to improve the path delay of inter-SLR connections. The
+  optimization adjusts the locations of the driver, load, or both along the
+  SLR crossing after potential replication. For use with UltraScale and
+  UltraScale+ devices.
+
+  -restruct_opt - (Optional) Advanced LUT restructure optimization to reduce
+  logic levels and reduce delay on critical signals.
+
+  -insert_negative_edge_ffs - (Optional) Inserts negative edge triggered FFs
+  for hold optimization. This is not applicable for the Advanced Flow.
+
+  -interconnect_retime - (Optional) Performs interconnect retiming to improve
+  critical path timing by movement or replication of a FF or LUT-FF pair.
+  This is applicable to Versal adaptive SoC devices only.
+
+  -lut_opt - (Optional) Performs LUT movement/replication to improve critical
+  path timing. This is applicable to Versal adaptive SoC devices only.
+
+  -casc_opt- (Optional) Performs LUT cascade optimization for creating new
+  LUT cascades or moving existing LUT cascades to improve critical path
+  timing. This is applicable to Versal adaptive SoC devices only.
+
+  -critical_cell_opt - (Optional) Replicates cells on timing critical nets to
+  reduce delays. This is not applicable for Versal adaptive SoC devices.
+
+  -dsp_register_opt - (Optional) Improves critical path delay by moving
+  registers from slices to DSP blocks, or from DSP blocks to slices.
+
+  -bram_register_opt - (Optional) Improves critical path delay by moving
+  registers from slices to block RAMs, or from block RAMs to slices.
+
+  -uram_register_opt - (Optional) Improves critical path delay by moving
+  registers across the URAM cell boundary, from slices into URAMs, or from
+  URAMs to slices.
+
+  -bram_enable_opt - (Optional) The block RAM enable optimization improves
+  timing on critical paths involving power-optimized block RAMs.
+  Pre-placement block RAM power optimization restructures the logic driving
+  block RAM read and write enable inputs to reduce dynamic power consumption.
+  After placement the restructured logic may become timing-critical. The
+  block RAM enable optimization reverses the enable-logic optimization to
+  improve the slack on the critical enable-logic paths. This is not
+  applicable for Advanced flow.
+
+  -shift_register_opt - (Optional) Performs shift register optimization to
+  improve timing on negative slack paths between shift register cells (SRLs)
+  and other logic cells. If there are timing violations to or from shift
+  register cells (SRL16E or SRLC32E), the optimization extracts a register
+  from the beginning or end of the SRL register chain and places it into the
+  logic fabric to improve timing. The optimization shortens the wire length
+  of the original critical path. Refer to the Vivado Design Suite User Guide:
+  Implementation (UG904) for more information.
+
+  -hold_fix - (Optional) Performs optimizations to insert data path delay to
+  fix hold time violations.
+
+  -aggressive_hold_fix - (Optional) Performs optimizations to insert data
+  path delay to fix hold time violations. Considers significantly more hold
+  violations than the standard hold fix algorithm.
+
+  -retime - (Optional) Re-time registers forward through combinational logic
+  to balance path delays. This is a property-driven optimization.
+
+  -force_replication_on_nets <args> - (Optional) Forces the drivers of the
+  specified net objects to be replicated, regardless of timing slack. This
+  option requires the use of the get_nets command to specify net objects.
+  Replication is based on load placements and requires manual analysis to
+  determine if replication is sufficient. If further replication is required,
+  nets can be replicated repeatedly by successive commands. This is not
+  applicable for Advanced Flow.
+
+  -directive <arg> - (Optional) Directs the mode of physical optimization
+  with specific design objectives. Only one directive can be specified for a
+  single phys_opt_design command and the values are case-sensitive. Supported
+  values include:
+
+   *  Explore - Run different algorithms in multiple passes of optimization,
+      including replication for very high fanout nets.
+
+   *  ExploreWithHoldFix - Run different algorithms in multiple passes of
+      optimization, including hold violation fixing and replication for very
+      high fanout nets.
+
+   *  ExploreWithAggressiveHoldFix - Run different algorithms in multiple
+      passes of optimization, including aggressive hold violation fixing and
+      replication for very high fanout nets.
+
+   *  AggressiveExplore - Similar to Explore but with different optimization
+      algorithms and more aggressive goals.
+
+   *  AlternateReplication - Use different algorithms for performing critical
+      cell replication. This is not applicable for Advanced Flow.
+
+   *  AggressiveFanoutOpt - Uses different algorithms for fanout-related
+      optimizations with more aggressive goals. This is not applicable for
+      Advanced Flow.
+
+   *  AlternateFlowWithRetiming - Perform more aggressive replication and DSP
+      and Block RAM optimizations, and enable register re-timing. This is not
+      applicable for Advanced Flow.
+
+   *  AddRetime - Performs the default phys_opt_design flow and adds
+      re-timing. This is not applicable for Advanced Flow.
+
+   *  RuntimeOptimized - Provides a reduced set of physical optimizations
+      with the shortest runtime. Use this directive when compile time
+      reduction is more important than design performance. RuntimeOptimized
+      includes fanout_opt, critical_cell_opt, placement_opt, and
+      bram_enable_opt.
+
+   *  RQS - Instructs phys_opt_design to select the phys_opt_design directive
+      specified by the report_qor_suggestion strategy suggestion. Requires an
+      RQS file with a strategy suggestion to be read in prior to calling this
+      directive. This is not applicable for Advanced Flow. See
+      report_qor_suggestions -help for more details.
+
+   *  Default - Run phys_opt_design with default settings.
+
+  Refer to the Vivado Design Suite User Guide: Implementation (UG904) for
+  more information on the effects of each directive.
+
+  Note: The -directive option controls the overall optimization strategy, and
+  is not compatible with any specific optimization options. It can only be
+  used with -quiet and -verbose.
+
+  -critical_pin_opt - For LUT inputs, this optimization performs remapping of
+  logical pins to physical pins, also known as pin-swapping, to improve
+  critical path timing. A critical path traversing a logical pin that has
+  been mapped to a slow physical pin, such as A1 or A2, is reassigned to a
+  faster physical pin, such as A6 or A5 if it improves timing.
+
+  Note: A cell with a LOCK_PINS property will be skipped and the cell will
+  retain the pin mapping specified by LOCK_PINS. Logical-to-physical pin
+  mapping can be obtained with get_site_pins for a selected logical pin
+  object.
+
+  -clock_opt - (Optional) Perform clock skew optimization during post-route
+  optimization. Insert global clock buffers to delay destination clocks to
+  improve setup on critical paths. Optimization will modify CLK_MOD delays
+  for Versal devices.
+
+  -path_groups <args> - (Optional) Perform optimizations on the specified
+  path groups only.
+
+  -tns_cleanup - (Optional) This option can be used with the
+  -slr_crossing_opt option. This performs a Total Negative Slack (TNS)
+  cleanup, which supports optimizing SLR crossing paths while allowing some
+  slack degradation on other paths, as long as the overall WNS does not
+  degrade. This is applicable to UltraScale and UltraScale+ devices.
+
+  -sll_reg_hold_fix - (Optional) Performs SLL register hold fix optimization.
+  You can use this option when the router is having trouble resolving hold
+  violations on SLR crossing paths. This is not applicable for Versal
+  adaptive SoC devices.
+
+  -quiet - (Optional) Execute the command quietly, returning no messages from
+  the command. The command also returns TCL_OK regardless of any errors
+  encountered during execution.
+
+  Note: Any errors encountered on the command-line, while launching the
+  command, will be returned. Only errors occurring inside the command will be
+  trapped.
+
+  -verbose - (Optional) Temporarily override any message limits and return
+  all messages from this command.
+
+  Note: Message limits can be defined with the set_msg_config command.
+
+Examples:
+
+  The following example performs a physical optimization of the current
+  post-placement design, and then writes the iphys_opt Tcl script for use
+  before placement:
+
+    phys_opt_design
+    write_iphys_opt_tcl C:/Data/my_iphys_opt.tcl
+
+  This example sets the LOCK_PINS property on the specified cell, then
+  performs physical optimizations including register re-timing, optimization
+  of registers across DSP blocks and block RAMs, and pin swapping (excluding
+  the locked pins) to improve timing:
+
+    set_property LOCK_PINS {I3:A1 I2:A4} [get_cell cpuEngine/qmem_dack_reg_i_1]
+    phys_opt_design -retime -dsp_register_opt -bram_register_opt \
+       -critical_pin_opt
+
+  This example directs phys_opt_design to run more iterations, with hold
+  violation fixing, to achieve potentially better results:
+
+    phys_opt_design -directive ExploreWithHoldFix
+
+  This example directs phys_opt_design to consider more nets for replication:
+
+    phys_opt_design -directive AggressiveFanoutOpt
+
+See Also:
+
+   *  get_pins
+   *  get_site_pins
+   *  opt_design
+   *  place_design
+   *  power_opt_design
+   *  read_iphys_opt_tcl
+   *  route_design
+   *  write_iphys_opt_tcl
+

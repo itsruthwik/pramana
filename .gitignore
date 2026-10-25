@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+campaigns/
+*.jou
+*.log
+.Xil/
+*.pem

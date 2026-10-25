@@ -1,0 +1,293 @@
+place_design
+
+Description: 
+Automatically place ports and leaf-level instances
+
+Syntax: 
+place_design  [-directive <arg>] [-subdirective <args>] [-no_timing_driven]
+              [-eco] [-timing_summary] [-unplace] [-post_place_opt] [-no_psip]
+              [-psip_options <args>] [-sll_align_opt] [-clock_vtree_type <arg>]
+              [-no_bufg_opt] [-ultrathreads] [-no_noc_opt]
+              [-net_delay_weight <arg>] [-quiet] [-verbose]
+
+Usage: 
+  Name                 Description
+  --------------------------------
+  [-directive]         Mode of behavior (directive) for this command. Please 
+                       refer to Arguments section of this help for values for
+                       this option.
+                       Default: Default
+  [-subdirective]      (Advanced Flow) Mode of behavior (subdirective) for 
+                       this command. Please refer to Arguments section of 
+                       this help for values for this option.
+  [-no_timing_driven]  Do not run in timing driven mode
+  [-eco]               (Advanced Flow) Run placer in ECO mode
+  [-timing_summary]    Enable accurate post-placement timing summary.
+  [-unplace]           Unplace all the instances which are not locked by 
+                       Constraints.
+  [-post_place_opt]    (Not applicable for Advanced Flow) Run only the post 
+                       commit optimizer
+  [-no_psip]           Disable PSIP (Physical Synthesis In Placer) 
+                       optimization during placement.
+  [-psip_options]      (Advanced Flow) Run place_design with specified PSIP 
+                       optimizations. Please refer to Arguments section of 
+                       this help for values for this option.
+  [-sll_align_opt]     (Not applicable for Advanced Flow) Run only the sll 
+                       alignment optimizer in PCO
+  [-clock_vtree_type]  Specify v-tree template to be used in place_design, 
+                       valid values are balanced, intraSLR, interSLR. For the
+                       Advanced Flow, the default is balanced; otherwise, 
+                       default is interSLR.
+  [-no_bufg_opt]       Disable global buffer insertion during placement
+  [-ultrathreads]      (Not applicable for Advanced Flow) Enable 
+                       ultra-threads mode to speed up place_design
+  [-no_noc_opt]        To result in better NoC QoS during place_design
+  [-net_delay_weight]  Specify net delay weight to be used, valid options are
+                       low, medium, high
+                       Default: low
+  [-quiet]             Ignore command errors
+  [-verbose]           Suspend message limits during command execution
+
+Categories: 
+Tools
+
+Description:
+
+  Place the specified ports and logic cells in the current design, or all
+  ports and logic cells, onto device resources on the target part. The tool
+  optimizes placement to minimize negative timing slack and reduce overall
+  wire length, while also attempting to spread out placement to reduce
+  routing congestion.
+
+  Placement is one step of the complete design implementation process, which
+  can be run automatically through the use of the launch_runs command when
+  running the AMD Vivado Design Suite Advanced Flow tools in the Project
+  Mode.
+
+  In Non-Project Mode, the implementation process must be run manually with
+  the individual commands namely opt_design, place_design, phys_opt_design,
+  and route_design. Refer to the Vivado Design Suite User Guide: Design Flows
+  Overview (UG892) for a complete description of Project and Non-Project
+  Mode.
+
+  Tip: The place_design can be multi-threaded to speed the process. Refer to
+  the set_param command for more information on setting the
+  general.maxThreads parameter.
+
+  You can also manually place some elements of the design using place_ports,
+  or by setting LOC properties on the cell, and then automatically place the
+  remainder of the design using place_design.
+
+  This command requires an open synthesized design, and it is recommended
+  that you run the opt_design command prior to running place_design to avoid
+  placing a suboptimal netlist.
+
+Arguments:
+
+  -directive <arg> - (Optional) Direct placement to achieve specific design
+  objectives. Only one directive can be specified for a single place_design
+  command, and values are case-sensitive. Supported values include:
+
+   *  Explore - Increased placer effort in detail placement and
+      post-placement optimization.
+
+   *  AggressiveExplore - Attempt to improve QoR at the expense of runtime.
+      The placer runtime is significantly higher compared to the Explore
+      directive because the placer uses more aggressive optimization goals to
+      meet timing requirements.
+
+   *  RuntimeOptimized - Run fewest iterations and trades higher design
+      performance for faster runtime.
+
+   *  Quick - Absolute, fastest runtime, non-timing-driven, performs the
+      minimum required placement for a legal design.
+
+   *  Default - Runs place_design with default settings.
+
+  Important: The -directive option controls the overall placement strategy,
+  and is not compatible with some place_design options. It can be used with
+  -no_psip, -net_delay_weight, -quiet and -verbose. Refer to the Vivado
+  Design Suite User Guide: Implementation (UG904) for more information on
+  placement strategies and the use of the -directive option.
+
+  -subdirective <arg> - (Optional) Affects specific placer phases. The
+  following placer phases can be controlled with subdirectives:
+
+    floorplanning, global placer, detailed placer
+
+  More than one subdirective can be used at a time. The subdirective option
+  is incompatible with other options with the exception of -directive,
+  -no_psip, -clock_vtree_type, -quiet and -verbose. The subdirective option
+  has the following format:
+
+   *  For available values of low, med, and high:
+
+        <phase>.<sub-directive>.<low|med|high>
+
+   *  For all others values, specifying the phase and sub-directive enables
+      the optimization:
+
+        <phase>.<sub-directive>
+
+  The supported phase names are Floorplan for the floorplanning phase, GPlace
+  for the global placer phase, and DPlace for the detailed pacer phase.
+  Multiple sub-directives can be specified through a Tcl list. Supported
+  subdirectives are:
+
+   *  RuntimeOptimized: Supported phase is Floorplan, Gplace, and Dplace.
+      Using this option indicates that the optimization is enabled. Improves
+      runtime at the expense of design performance.
+
+   *  ExtraTimingUpdate: Supported phase is Floorplan, Gplace, and Dplace.
+      Using this option indicates that the optimization is enabled. Increases
+      the number of timing updates to improve design performance.
+
+   *  ExtraTimingOpt: Supported phase is Floorplan, Gplace, and Dplace.
+      Allowed value is low (default), med, and high. It improves design
+      performance at the expense of runtime.
+
+   *  BalancedSLR: Supported phase is Floorplan. Allowed value is low
+      (default), med, and high. It partitions across SLRs to balance the
+      number of cells between SLRs.
+
+   *  ForceSpreading: Supported phase is Floorplan and Gplace. Allowed value
+      is low (default), med, and high. Spreads the placement by lowering the
+      target utilization for all block types.
+
+   *  ReduceCongestion: Supported phase is Gplace. Allowed value is low
+      (default), med, and high. It reduces global and pin congestion at the
+      expense of other metrics.
+
+   *  WLDrivenBlockPlacement: Supported phase is Floorplan and Gplace. Using
+      this option indicates that the optimization is enabled
+      wirelength-driven placement of RAM and DSP blocks. It overrides
+      timing-driven placement by directing the placer to minimize the
+      distance of connections to and from blocks. This directive can improve
+      timing to and from RAM and DSP blocks.
+
+   *  ReducePinDensity: Supported phase is Dplace. Allowed value is low
+      (default), med, and high. Detail placer tries to reduce pin congestion
+      for CLBs to improve overall router convergence.
+
+   *  EarlyBlockPlacement: Supported phase is Gplace. Using option indicates
+      optimization is enabled. The placement of the DSP and block RAM blocks
+      are fixed earlier in the placer flow.
+
+  -no_timing_driven - (Optional) Disables the default timing driven placement
+  algorithm. This results in a faster placement based on wire lengths, but
+  ignores any timing constraints during the placement process.
+
+  -eco - (Optional) Run the placer in ECO mode. New cells added to the design
+  are placed while maintaining placement of existing cells.
+
+  -timing_summary - (Optional) Report the post-placement worst negative slack
+  (WNS) using results from static timing analysis. The WNS value is identical
+  to that of report_timing_summary when run on the post-placement design. By
+  default the placer reports an estimated WNS based on incremental placement
+  updates during the design implementation. The -timing_summary option incurs
+  additional runtime to run a full timing analysis.
+
+  -unplace - (Optional) Unplace all the instances which are not locked by
+  constraints. Cells with fixed placement (IS_LOC_FIXED set to TRUE), are not
+  affected.
+
+  Tip: Use the set_property to change IS_LOC_FIXED to FALSE prior to
+  unplacing fixed cells.
+
+  -no_psip - (Optional) Disable PSIP (Physical Synthesis In Placer)
+  optimization during placement. By default, to improve delay the Vivado
+  Advanced Flow placer performs optimizations such as replicating drivers of
+  high-fanout nets and drivers of loads that are far-apart. This option
+  disables those optimizations.
+
+  -psip_options - (Optional) Specify a list of optimizations to switch on
+  during Physical Synthesis In Placer (PSIP) phase. Optimizations are performed
+  only if they are applicable for the given design. Use the following commands
+  to specify which optimization to enable during PSIP:
+
+   *  critical_cell_opt
+   *  fanout_opt
+   *  very_high_fanout_opt
+   *  equ_drivers_opt
+   *  dsp_register_opt
+   *  bram_register_opt
+   *  uram_register_opt
+   *  shift_register_opt
+   *  retime
+   *  per_slr_replication_opt
+   *  shift_register_to_pipeline
+   *  auto_pipeline_insertion
+   *  control_set_opt
+
+  -net_delay_weight - (Optional) Increases estimated delay of high fanout and
+  long-distance nets. Three levels of pessimism are supported: high, medium,
+  and low. High applies to the highest level of pessimism. Default value is
+  low.
+
+  -clock_vtree_type <arg> - (Optional) Specifies the type of clock tree which
+  is used as the default option for Versal SSIT devices. Depending on the
+  value, the clock tree is optimized for different design targets.
+
+   *  Select intraSLR to minimize clock skew within each SLR
+
+   *  Select interSLR to minimize clock skew on paths between SLRs
+
+   *  Select balanced for the best compromise between intraSLR and interSLR
+
+  Warning: Placer clock v-tree type properties are case sensitive. Using the
+  wrong case generates an error message stopping the placer flow.
+
+  -quiet - (Optional) Execute the command quietly, returning no messages from
+  the command. The command also returns TCL_OK regardless of any errors
+  encountered during execution.
+
+  Note: Any errors encountered on the command-line, while launching the
+  command, will be returned. Only errors occurring inside the command will be
+  trapped.
+
+  -verbose - (Optional) Temporarily override any message limits and return
+  all messages from this command.
+
+  Note: Message limits can be defined with the set_msg_config command.
+
+Examples:
+
+  The following example directs the Vivado Advanced Flow placer to try
+  different placement algorithms to achieve a better placement result:
+
+    place_design -directive Explore
+
+  The following example uses the Default directive but enables wirelength
+  driven placement of RAM and DSP blocks during floorplanning.
+
+    place_design -subdirective Floorplan.WLDrivenBlockPlacement
+
+  The following example uses the Default directive but sets instructs the
+  placer to use high effort for SLR balancing in floorplan, reducing
+  congestion in global place and reducing pin density in detailed place.
+
+    place_design -subdirective {Floorplan.BalancedSLR.high Floorplan.ExtraTimingOpt.high GPlace.ReduceCongestion.high DPlace.ReducePinDensity.high}
+
+  This example unplaces the current design:
+
+    place_design -unplace
+
+  The following example directs Vivado Advanced Flow Placer to run only
+  bram register optimization and fanout optimization during the Physical
+  Synthesis Phase if the following command line options are used:
+   
+    place_design -psip_options {bram_register_opt fanout_opt}
+
+
+See Also:
+
+   *  launch_runs
+   *  opt_design
+   *  place_ports
+   *  phys_opt_design
+   *  power_opt_design
+   *  read_checkpoint
+   *  route_design
+   *  set_property
+
+
