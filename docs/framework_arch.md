@@ -36,7 +36,7 @@ S0 SPACE ─▶ S1 PROFILE ─▶ S2 BASELINE ─▶ S3 PRUNE ─▶ S4 SEARCH (
 
 ### S0 — Define the full search space
 
-**What.** Parse Vivado's own `help <command>` output (pinned version, 2025.1) into a
+**What.** Parse Vivado's own `help <command>` output (pinned version, 2025.2 — the only install on this machine with UltraScale+ parts) into a
 machine-readable spec: for opt_design, place_design, phys_opt_design and route_design, every
 directive, every option and its type (switch, choice, numeric with 3–4 levels), and the
 legality rules (e.g. in opt_design and phys_opt_design a directive cannot be combined with
@@ -177,5 +177,5 @@ The same KB compiles to:
 - Failure is decided from Tcl return codes and sentinels, never log phrasing.
 - Every LLM call is logged (prompt, response, model, cost) under the campaign.
 - LLM: Claude Code headless (`claude -p`), Sonnet 5.5, effort low, on the user's subscription.
-- Vivado-only for v1 (2025.1). One part per campaign.
+- Vivado-only for v1 (2025.2: the local 2025.1 install has no UltraScale+ parts). One part per campaign.
 - Ship plain when the evidence is clear; keep-if-better only when it isn't.
