@@ -176,6 +176,23 @@ def allocate(c: Campaign, did: str, pr: dict, start: dict, rnd: int, w_llm: floa
         per_cmd[cd0["chain"][0]["cmd"]] = 1
         jobs.append(c.job(did, start, cd0["chain"], "exploit", round=rnd, tag="bandit",
                           score=round(s0, 4)))
+    # beam: one exploit slot continues from the second-best state (bandit-scored), so the
+    # search doesn't stall on a single lineage
+    tops = c.top_states(did, 2)
+    if len(tops) > 1 and n_exp >= 4 and tops[1]["id"] != start["id"]:
+        s2 = tops[1]
+        done2 = {k for (sid, k) in done if sid == s2["id"]}
+        alt = []
+        for st in enumerate_allowed(spec, pr["allowed"]):
+            k2 = chain_key([st])
+            if k2 in done2 or not space.chain_ok([st], spec):
+                continue
+            v, b = bandit_parts([st], stats, n_total, scale)
+            alt.append((v + b, k2, st))
+        if alt:
+            alt.sort(key=lambda x: -x[0])
+            jobs.append(c.job(did, s2, [alt[0][2]], "exploit", round=rnd, tag="beam2",
+                              score=round(alt[0][0], 4)))
     for s, k, cd in scored:
         if k in chosen:
             continue

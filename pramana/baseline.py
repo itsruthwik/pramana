@@ -14,6 +14,8 @@ BASELINES = {
     "physopt_explore_preroute": [{"cmd": "place", "directive": "Default"},
                                  {"cmd": "phys_opt", "directive": "Explore"}],
     "opt_explore": [{"cmd": "opt", "directive": "Explore"}],
+    # control for opt_explore: opt forces a re-place, so re-place alone must be measured too
+    "place_default": [{"cmd": "place", "directive": "Default"}],
 }
 REPEAT_OF = "route_explore"
 

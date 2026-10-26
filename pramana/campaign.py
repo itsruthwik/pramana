@@ -60,6 +60,24 @@ class Campaign:
                         "chain_key": r["chain_key"], "start": r["start"]}
         return best
 
+    def top_states(self, did: str, k: int = 2) -> list[dict]:
+        """Best k legal states with saved checkpoints and distinct WNS (beam for the search)."""
+        cands = [self.input_state(did)]
+        for r in self.results(did):
+            if r["valid"] and r.get("dcp") and Path(r["dcp"]).exists():
+                cands.append({"id": r["run_id"], "dcp": r["dcp"], "wns": r["result"]["wns"],
+                              "chain_key": r["chain_key"], "start": r["start"]})
+        cands.sort(key=lambda s: -s["wns"])
+        out, seen = [], set()
+        for s in cands:
+            if round(s["wns"], 3) in seen:
+                continue
+            seen.add(round(s["wns"], 3))
+            out.append(s)
+            if len(out) == k:
+                break
+        return out
+
     def state(self, did: str, sid: str) -> dict:
         if sid == "input":
             return self.input_state(did)
