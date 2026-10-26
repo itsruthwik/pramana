@@ -96,8 +96,9 @@ def _bullets(section: str) -> list[str]:
 
 
 def _option_help(text: str, flag: str) -> str:
-    m = re.search(rf"\[{re.escape(flag)}\]\s+(.*?)(?=\n\s*\[|\n\s*-\w+\s|\n\nDescription|\Z)",
-                  text, re.S)
+    usage = text.split("Usage:", 1)[-1].split("Description:", 1)[0]
+    m = re.search(rf"^\s+\[{re.escape(flag)}\]\s+(.*?)(?=\n\s+\[-|\n\s+-\w|\n\s*\n|\Z)",
+                  usage, re.S | re.M)
     return " ".join(m.group(1).split()) if m else ""
 
 
