@@ -127,7 +127,7 @@ class Runner:
                      job.get("extra_tcl", ""))
         rdir = self.runs_dir / job["design"] / rid
         rdir.mkdir(parents=True, exist_ok=True)
-        script = build_script(job["start_dcp"], job["chain"], rdir, self.cfg.threads,
+        script = build_script(job["start_dcp"], job["chain"], rdir, job.get("threads", self.cfg.threads),
                               keep_min_wns=job.get("start_wns"), extra_tcl=job.get("extra_tcl", ""))
         (rdir / "run.tcl").write_text(script)
         t0 = time.time()
@@ -152,7 +152,7 @@ class Runner:
             "steps": parsed["steps"], "opt_secs": round(opt_secs, 1),
             "wall_s": round(vr.wall_s, 1), "dcp": str(rdir / "out.dcp") if parsed["wrote_dcp"] else None,
             "run_dir": str(rdir), "time": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "threads": self.cfg.threads,
+            "threads": job.get("threads", self.cfg.threads),
         }
         self._append(rec)
         return rec

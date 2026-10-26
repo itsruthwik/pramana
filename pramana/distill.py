@@ -431,7 +431,7 @@ def cost_model(c: Campaign) -> dict:
     pts: dict[str, list] = defaultdict(list)
     for r in c.results():
         prims = (c.profile(r["design"])["input"] or {}).get("prims")
-        if not prims or not r["valid"]:
+        if not prims or not r["valid"] or r.get("threads", c.cfg.threads) != c.cfg.threads:
             continue
         for s in r["steps"]:
             n = s["name"]

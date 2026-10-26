@@ -17,7 +17,11 @@ BASELINES = {
     # control for opt_explore: opt forces a re-place, so re-place alone must be measured too
     "place_default": [{"cmd": "place", "directive": "Default"}],
 }
-REPEAT_OF = "route_explore"
+# Vivado is deterministic for a fixed thread count, so identical repeats show no spread.
+# Repeats run with a different thread count instead: same algorithm, different tie-breaking,
+# which gives a usable noise floor. One routing repeat, one re-place repeat.
+REPEATS = ["route_explore", "physopt_explore_preroute"]
+REPEAT_THREADS = 2
 
 
 def jobs(c: Campaign) -> list[dict]:
@@ -26,8 +30,9 @@ def jobs(c: Campaign) -> list[dict]:
         st = c.input_state(d["id"])
         for tag, chain in BASELINES.items():
             out.append(c.job(d["id"], st, chain, "baseline", tag=tag))
-        out.append(c.job(d["id"], st, BASELINES[REPEAT_OF], "baseline", tag=REPEAT_OF + "_rep",
-                         rep=1))
+        for tag in REPEATS:
+            out.append(c.job(d["id"], st, BASELINES[tag], "baseline", tag=tag + "_rep", rep=1,
+                             threads=REPEAT_THREADS))
     # cheap designs first so evidence for them arrives early
     out.sort(key=lambda j: j["dcp_mb"])
     return out
