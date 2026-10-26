@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _launch_lock = threading.Lock()
+_recent: list[tuple[float, float]] = []   # (launch time, reserved GB)
 
 
 @dataclass
@@ -42,9 +43,16 @@ def run_vivado(script: Path, cwd: Path, settings: str, timeout_s: float,
     script = Path(script).resolve()
     cmd = (f"source {settings} >/dev/null 2>&1 && exec vivado -mode batch -notrace "
            f"-source {script} -log {cwd/'vivado.log'} -journal {cwd/'vivado.jou'}")
-    # Launches are serialised and spaced so memory readings reflect the previous launch.
+    # Launches are serialised; jobs launched in the last few minutes haven't reached their
+    # peak yet, so their growth is reserved on top of this job's need.
     with _launch_lock:
-        wait_for_memory(need_gb)
+        while True:
+            now = time.time()
+            _recent[:] = [(t, g) for t, g in _recent if now - t < 300]
+            if free_mem_gb() >= need_gb + 0.5 * sum(g for _, g in _recent):
+                break
+            time.sleep(20)
+        _recent.append((time.time(), need_gb))
         proc = subprocess.Popen(["bash", "-c", cmd], cwd=str(cwd), stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True, start_new_session=True)
         time.sleep(5)
