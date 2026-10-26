@@ -186,6 +186,9 @@ def apply_probe(spec: dict, probe: dict) -> dict:
             o = c["options"].get(flag)
             if o and "values" in o:
                 o["values"] = [v for v in o["values"] if v not in bad]
+        for flag in [k for k, o in c["options"].items() if "values" in o and not o["values"]]:
+            c["excluded_options"][flag] = "no value passed the capability probe"
+            del c["options"][flag]
         for flag in probe.get(short, {}).get("invalid_options", []):
             if flag in c["options"]:
                 c["excluded_options"][flag] = "failed capability probe"
