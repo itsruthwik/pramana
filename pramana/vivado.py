@@ -28,7 +28,9 @@ def free_mem_gb() -> float:
 
 
 def wait_for_memory(need_gb: float, poll_s: float = 20.0) -> None:
-    """Block until at least need_gb of memory is available (other users share this box)."""
+    """Block until at least need_gb of memory is available. The box runs earlyoom, which
+    SIGTERMs the largest process when available memory drops below ~10%, so a run must only
+    start when there's room for its own growth on top of a safety margin."""
     while free_mem_gb() < need_gb:
         time.sleep(poll_s)
 

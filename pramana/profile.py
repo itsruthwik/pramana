@@ -49,7 +49,7 @@ def profile_design(cfg: Config, d: dict) -> dict:
         return json.loads((out / "profile.json").read_text())
     (out / "profile.tcl").write_text(profile_script(d["path"], out, cfg.threads))
     vr = run_vivado(out / "profile.tcl", out, cfg.vivado_settings, cfg.run_timeout_s,
-                    need_gb=max(cfg.min_free_mem_gb, est_mem_gb(d["dcp_mb"])))
+                    need_gb=cfg.min_free_mem_gb + est_mem_gb(d["dcp_mb"]))
     (out / "stdout.txt").write_text(vr.stdout)
     parsed = parse_stdout(vr.stdout, vr.exit_code, vr.timed_out)
     part = re.search(r"^PART (\S+)", vr.stdout, re.M)

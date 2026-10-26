@@ -368,7 +368,7 @@ def run(c: Campaign, log=print) -> None:
         st["pred_pairs"] += [list(p) for p in pairs]
         rho = spearman([tuple(p) for p in st["pred_pairs"]])
         if rho is not None:
-            st["llm_weight"] = min(0.9, max(0.1, 0.5 + 0.5 * rho))
+            st["llm_weight"] = min(0.9, max(0.05, rho))   # trust = measured rank correlation
         for did in active:
             after = c.best_state(did)["wns"]
             hist = st["best_history"].setdefault(did, [])
