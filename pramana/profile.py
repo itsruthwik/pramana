@@ -70,7 +70,14 @@ def profile_all(cfg: Config, designs: list[dict], log=print) -> list[dict]:
         inp = p.get("input") or {}
         log(f"[profile] {p['id']:28s} {p['status']} part={p['part']} wns={inp.get('wns')} "
             f"whs={inp.get('whs')} clocks={len(inp.get('clocks') or [])} unchanged={p['dcp_unchanged']}")
-    parts = {p["part"] for p in profs if p["part"]}
-    if len(parts) > 1:
-        raise SystemExit(f"campaign mixes parts {parts}; one part per campaign")
-    return profs
+    # one part per campaign: designs on another part are excluded (recorded, not fatal)
+    other = [p for p in profs if p["part"] and p["part"] != cfg.part]
+    if other:
+        for p in other:
+            log(f"[profile] EXCLUDED {p['id']}: part {p['part']} != campaign part {cfg.part}")
+        keep = [d["id"] for d in designs if d["id"] not in {p["id"] for p in other}]
+        cfg.designs = keep
+        cfg.save()
+        (cfg.root / "excluded.json").write_text(json.dumps(
+            {p["id"]: f"part {p['part']}" for p in other}, indent=1))
+    return [p for p in profs if p not in other]
