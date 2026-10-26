@@ -69,5 +69,7 @@ rosetta_digit-recognition, LU32PEEng, bnn).
 | LU32PEEng | +3.314 | +2.606 (place Default > phys_opt Explore) |
 | bnn | +0.258 | +0.233 (place Default > phys_opt Explore) |
 
-All valid. The policy beats the best single baseline on 5/5, but it also uses more time
-(41–67 min vs one baseline run); a same-time comparison is still to do.
+All valid. Time check: running all 6 Explore baselines and keeping the best takes 38–53 min
+in total; the policy takes 41–67 min in one session and beats that best-of-6 on 5/5 designs
+(by +0.38, +0.08, +0.27, +0.71, +0.03 ns). The bnn and finn margins are small and the policy
+used 4–14 min more there; a strictly time-matched comparison is still to do.
