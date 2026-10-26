@@ -86,6 +86,17 @@ phys_opt AlternateReplication, route MoreGlobalIterations (each keep-if-better).
 | LU32PEEng | +3.314 (67) | +3.462 (53) |
 | bnn | +0.258 (56) | +0.258 (43) |
 
-Same gain (LU32PEEng +0.15 ns better), 13–32% less time. Both policies share the first step
-(re-place + phys_opt Explore), which carries most of the gain; the later steps differ and add
-little. More training designs did not change the knowledge, only its cost.
+Same gain (LU32PEEng +0.15 ns better), 13–32% less time. More training designs did not change
+the result, only its cost.
+
+Where the gain comes from (keep-if-better logs, both policies):
+- Step 1 (place Default > phys_opt Explore) was kept on 5/5 designs.
+- A second re-place with a wirelength-driven directive (AltWLDrivenPlacement or
+  WLDrivenBlockPlacement, listed as "extra actions") gave the largest single jumps:
+  corescore -1.139 -> -0.76 (both policies), digit-recognition -> -0.647 (both policies).
+  Both policies land on the same WNS there, i.e. the final placement decides it.
+- Post-route phys_opt steps add 0.02–0.6 ns where kept (LU32PEEng AlternateReplication +0.6).
+- Route-only steps were nearly always reverted.
+So the useful knowledge is "try several placer directives, keep the best, then phys_opt";
+the policy's fixed order put the strongest alternative placement last, as an extra action.
+
