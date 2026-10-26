@@ -19,6 +19,19 @@ def _tcl_val(v) -> str:
     return str(v)
 
 
+# Plain Vivado Tcl (no pramana procs), so compiled bundles can use it too.
+ROUTE_IF_NEEDED = (
+    "set _rs [report_route_status -return_string]; set _u 0; set _p 0; "
+    "regexp -line {unrouted nets[\\s.]*:\\s*([0-9]+)} $_rs -> _u; "
+    "regexp -line {partially routed nets[\\s.]*:\\s*([0-9]+)} $_rs -> _p; "
+    "if {$_u > 0 || $_p > 0} {route_design}")
+
+
+def tcl_step(name: str, code: str) -> dict:
+    """A custom-Tcl step (a discovered recipe). Like every unit it ends routed."""
+    return {"cmd": "tcl", "name": name, "tcl": code.rstrip() + "\n" + ROUTE_IF_NEEDED}
+
+
 def step_command(step: dict) -> str:
     parts = [COMMANDS[step["cmd"]]]
     if step.get("directive"):
@@ -38,6 +51,11 @@ def expand(chain: list[dict]) -> list[tuple[str, list[str], bool]]:
         name = f"s{i+1}_{st['cmd']}"
         cmds: list[str] = []
         c = st["cmd"]
+        if c == "tcl":
+            # assumes a routed or placed design; tcl_step re-routes if it left nets unrouted
+            out.append((name, [st["tcl"]], False))
+            state = "routed"
+            continue
         if c in ("opt", "place"):
             if state != "unplaced":
                 cmds.append("place_design -unplace")

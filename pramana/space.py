@@ -239,6 +239,8 @@ def space_size(spec: dict, max_chain: int = 3) -> dict:
 def step_key(step: dict) -> str:
     """Canonical text of a step, e.g. 'phys_opt[-rewire,-critical_cell_opt]' or 'route:Explore'."""
     s = step["cmd"]
+    if s == "tcl":
+        return f"tcl:{step.get('name', 'recipe')}"
     if step.get("directive"):
         s += ":" + step["directive"]
     opts = step.get("opts") or {}
@@ -262,6 +264,8 @@ def chain_key(chain: list[dict]) -> str:
 
 def step_factors(step: dict) -> list[str]:
     """The factor values a step uses (the units the bandit and the pruner reason about)."""
+    if step["cmd"] == "tcl":
+        return [f"tcl:{step.get('name', 'recipe')}"]
     f = [f"{step['cmd']}"]
     if step.get("directive"):
         f.append(f"{step['cmd']}:directive={step['directive']}")

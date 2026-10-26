@@ -40,6 +40,8 @@ def policy_steps(units: list[list[dict]], kb: dict) -> list[dict]:
     ship = _ship_by_factor(kb)
     out = []
     for u in units:
+        if not u:   # campaigns before the tcl step type recorded recipe units as []
+            continue
         cmds, kinds = [], []
         for name, cs, auto in flow.expand(u):
             cmds += cs

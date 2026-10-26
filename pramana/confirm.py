@@ -20,7 +20,11 @@ def lineage_units(c: Campaign, did: str, sid: str) -> list[list[dict]]:
     units: list[list[dict]] = []
     while sid != "input":
         r = next(r for r in c.results(did) if r["run_id"] == sid)
-        units.insert(0, r["chain"])
+        u = list(r["chain"])
+        if r.get("extra_tcl"):   # the runner runs the custom Tcl after the chain
+            tag = r.get("tag") or "recipe"
+            u.append(flow.tcl_step(tag if ":" in tag else f"{did}:{tag}", r["extra_tcl"]))
+        units.insert(0, u)
         sid = r["start"]
     return units
 
