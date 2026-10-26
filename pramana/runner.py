@@ -111,7 +111,9 @@ class Runner:
         return [json.loads(ln) for ln in self.db.read_text().splitlines() if ln.strip()]
 
     def done_ids(self) -> set[str]:
-        return {r["run_id"] for r in self.load()}
+        """Runs that finished (ok or a tool error). Crashes/timeouts are infrastructure
+        failures (e.g. killed under memory pressure) and are retried."""
+        return {r["run_id"] for r in self.load() if r["status"] in ("ok", "error")}
 
     def _append(self, rec: dict) -> None:
         with _db_lock:
@@ -177,7 +179,11 @@ class Runner:
 
     def _safe_run(self, job):
         try:
-            return self.run(job)
+            rec = self.run(job)
+            if rec["status"] == "crash" and not any(not st["ok"] for st in rec["steps"]):
+                time.sleep(60)          # killed mid-run: wait for memory, retry once
+                rec = self.run(job)
+            return rec
         except Exception as e:  # a harness bug must not kill the pool
             print(f"[runner] HARNESS ERROR {job.get('design')}: {e!r}")
             return None
