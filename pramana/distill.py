@@ -191,11 +191,13 @@ def conditions(c: Campaign, actions: list[dict], rng: random.Random) -> list[dic
         fit = _stump_fit([feats[d][best[0]] for d in designs], [labels[d] for d in designs])
         t, s, _ = fit
         rule = f"{best[0]} {'>' if s > 0 else '<='} {round(t, 4)}"
-        out.append({"factor": a["factor"], "status": "condition" if p < 0.2 else "weak (fails shuffle test)",
+        ok = p < 0.2
+        out.append({"factor": a["factor"], "status": "condition" if ok else "weak (fails shuffle test)",
                     "rule": f"helps when {rule}", "feature": best[0], "threshold": round(t, 4),
                     "side": s, "lofo_acc": round(best[1], 3), "lofo_majority_acc": round(base, 3),
                     "perm_p": round(p, 3), "n_designs": len(designs),
-                    "grade": _grade(len(designs), len({fam[d] for d in designs}))})
+                    # a rule that shuffled labels match as often is not evidence, whatever n is
+                    "grade": _grade(len(designs), len({fam[d] for d in designs})) if ok else "D"})
     return out
 
 
