@@ -17,10 +17,10 @@ BASELINES = {
     # control for opt_explore: opt forces a re-place, so re-place alone must be measured too
     "place_default": [{"cmd": "place", "directive": "Default"}],
 }
-# Vivado is deterministic for a fixed thread count, so identical repeats show no spread.
-# Repeats run with a different thread count instead: same algorithm, different tie-breaking,
-# which gives a usable noise floor. One routing repeat, one re-place repeat.
-REPEATS = ["route_explore", "physopt_explore_preroute"]
+# Vivado is deterministic: identical repeats, and repeats with another thread count (tried in
+# dev2: 0.000 ns spread on 20/20 design x chain pairs), give no spread. So no repeats; the
+# noise floor is cfg.noise_floor_ns until a perturbation-based estimate exists.
+REPEATS: list[str] = []
 REPEAT_THREADS = 2
 
 
