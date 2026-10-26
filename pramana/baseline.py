@@ -39,7 +39,8 @@ def jobs(c: Campaign) -> list[dict]:
 
 
 def run(c: Campaign, log=print) -> list[dict]:
-    return c.runner.run_many(jobs(c), log=log)
+    """Reference runs go to the framework store; ones already there are skipped."""
+    return c.store_runner.run_many(jobs(c), log=log)
 
 
 def baseline_runs(c: Campaign, did: str) -> dict[str, dict]:

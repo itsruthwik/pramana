@@ -98,10 +98,11 @@ def is_valid(result: dict | None) -> bool:
 
 
 class Runner:
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, root: Path | None = None):
         self.cfg = cfg
-        self.db = cfg.root / "results.jsonl"
-        self.runs_dir = cfg.root / "runs"
+        root = root or cfg.root
+        self.db = root / "results.jsonl"
+        self.runs_dir = root / "runs"
         self.runs_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------ results db
@@ -145,6 +146,7 @@ class Runner:
             "run_id": rid, "design": job["design"], "start": job["start"],
             "chain": job["chain"], "chain_key": chain_key(job["chain"]),
             "extra_tcl": job.get("extra_tcl"),
+            "dcp_md5": job.get("dcp_md5"),
             "purpose": job.get("purpose", "?"), "tag": job.get("tag"), "round": job.get("round"),
             "rep": job.get("rep", 0),
             "status": parsed["status"], "valid": valid, "result": res,

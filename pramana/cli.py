@@ -11,6 +11,8 @@
   python -m pramana confirm <campaign>      S6
   python -m pramana distill <campaign>      S7
   python -m pramana compile <campaign>      S8
+  python -m pramana prepare <campaign>      space, profile, probe, baseline into the framework
+                                            store (skips what is already there)
   python -m pramana all <campaign>          S0..S8
   python -m pramana status <campaign>
 """
@@ -53,13 +55,18 @@ def stage(name: str, cfg: Config, log) -> None:
     t0 = time.time()
     log(f"=== {name} ===")
     if name == "space":
-        from . import space
-        spec = space.build_spec(cfg.vivado_version)
+        from . import space, store
+        if store.shared_spec(cfg).exists():   # probed once per (Vivado version, part)
+            spec = json.loads(store.shared_spec(cfg).read_text())
+            log(f"space: framework spec {store.shared_spec(cfg)}")
+        else:
+            spec = space.build_spec(cfg.vivado_version)
         space.save(spec, cfg.root / "space.json")
         log(f"space: {json.dumps(spec['size'])}")
     elif name == "probe":
-        from . import probe
+        from . import probe, store
         probe.run(c, log=log)
+        store.publish_spec(cfg, cfg.root)
     elif name == "profile":
         from . import profile
         profile.profile_all(cfg, c.designs(), log=log)
@@ -93,6 +100,7 @@ def stage(name: str, cfg: Config, log) -> None:
     log(f"=== {name} done in {time.time() - t0:.0f}s ===")
 
 
+PREPARE = ["space", "profile", "probe", "baseline"]   # framework-level, done once per DCP
 ALL = ["space", "profile", "probe", "baseline", "prune", "search", "discover", "confirm",
        "distill", "compile"]
 
@@ -110,7 +118,10 @@ def main(argv=None) -> None:
         return cmd_init(a)
     cfg = Config.load(a.campaign)
     log = log_to(cfg)
-    if a.command == "all":
+    if a.command == "prepare":
+        for n in PREPARE:
+            stage(n, cfg, log)
+    elif a.command == "all":
         names = ALL[ALL.index(a.from_stage):] if a.from_stage else ALL
         for n in names:
             stage(n, cfg, log)

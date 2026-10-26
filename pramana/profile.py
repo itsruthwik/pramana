@@ -10,6 +10,7 @@ from . import tcl
 from .config import Config
 from .corpus import md5
 from .runner import parse_stdout
+from .store import profile_dir
 from .vivado import est_mem_gb, run_vivado
 
 REPORTS = [
@@ -43,7 +44,7 @@ def profile_script(dcp: str, out: Path, threads: int) -> str:
 
 
 def profile_design(cfg: Config, d: dict) -> dict:
-    out = cfg.root / "profile" / d["id"]
+    out = profile_dir(cfg, d)
     out.mkdir(parents=True, exist_ok=True)
     if (out / "profile.json").exists():
         return json.loads((out / "profile.json").read_text())

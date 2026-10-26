@@ -5,3 +5,4 @@ campaigns/
 *.log
 .Xil/
 *.pem
+store/

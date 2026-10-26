@@ -1,0 +1,8 @@
+{
+ "-fanout_opt": "ERROR: [Vivado_Tcl 4-265] Option -fanout_opt is specified but not supported yet for post-route physical synthesis. Please remove the option and rerun phys_opt_design",
+ "-dsp_register_opt": "ERROR: [Vivado_Tcl 4-265] Option -dsp_register_opt is specified but not supported yet for post-route physical synthesis. Please remove the option and rerun phys_opt_design",
+ "-bram_register_opt": "ERROR: [Vivado_Tcl 4-265] Option -bram_register_opt is specified but not supported yet for post-route physical synthesis. Please remove the option and rerun phys_opt_design",
+ "-uram_register_opt": "ERROR: [Vivado_Tcl 4-265] Option -uram_register_opt is specified but not supported yet for post-route physical synthesis. Please remove the option and rerun phys_opt_design",
+ "-bram_enable_opt": "ERROR: [Vivado_Tcl 4-265] Option -bram_enable_opt is specified but not supported yet for post-route physical synthesis. Please remove the option and rerun phys_opt_design",
+ "-shift_register_opt": "ERROR: [Vivado_Tcl 4-265] Option -shift_register_opt is specified but not supported yet for post-route physical synthesis. Please remove the option and rerun phys_opt_design"
+}

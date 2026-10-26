@@ -1,0 +1,474 @@
+{
+ "vivado_version": "2025.2",
+ "commands": {
+  "opt": {
+   "vivado_command": "opt_design",
+   "directives": {
+    "Explore": {
+     "source": "help"
+    },
+    "ExploreArea": {
+     "source": "help"
+    },
+    "ExploreWithRemap": {
+     "source": "help"
+    },
+    "ExploreSequentialArea": {
+     "source": "help"
+    },
+    "RuntimeOptimized": {
+     "source": "help"
+    },
+    "Default": {
+     "source": "help"
+    }
+   },
+   "options": {
+    "-retarget": {
+     "help": "Retarget",
+     "type": "switch"
+    },
+    "-propconst": {
+     "help": "Propagate constants across leaf-level instances",
+     "type": "switch"
+    },
+    "-sweep": {
+     "help": "Remove unconnected leaf-level instances",
+     "type": "switch"
+    },
+    "-bram_power_opt": {
+     "help": "Perform Block RAM power optimizations",
+     "type": "switch"
+    },
+    "-remap": {
+     "help": "Remap logic optimally in LUTs",
+     "type": "switch"
+    },
+    "-aggressive_remap": {
+     "help": "High effort remap optimization",
+     "type": "switch"
+    },
+    "-resynth_remap": {
+     "help": "High effort re-synthesis to reduce the depth of logic in critical timing paths",
+     "type": "switch"
+    },
+    "-resynth_area": {
+     "help": "Resynthesis",
+     "type": "switch"
+    },
+    "-resynth_seq_area": {
+     "help": "Resynthesis (with Sequential optimizations)",
+     "type": "switch"
+    },
+    "-muxf_remap": {
+     "help": "Optimize all MuxFx cells to LUT3",
+     "type": "switch"
+    },
+    "-hier_fanout_limit": {
+     "help": "Replicate by module with threshold N",
+     "type": "numeric",
+     "values": [
+      512,
+      1024,
+      2048,
+      4096
+     ]
+    },
+    "-bufg_opt": {
+     "help": "Insert, Merge and Split BUFGs",
+     "type": "switch"
+    },
+    "-shift_register_opt": {
+     "help": "Pull register stage from shift register",
+     "type": "switch"
+    },
+    "-dsp_register_opt": {
+     "help": "Push/Pull Registers out of a DSP",
+     "type": "switch"
+    },
+    "-control_set_merge": {
+     "help": "Merge all equivalent control set drivers to a single driver",
+     "type": "switch"
+    },
+    "-control_set_opt": {
+     "help": "Optimize control set, Versal only",
+     "type": "switch"
+    },
+    "-merge_equivalent_drivers": {
+     "help": "Merge all LUT,Flop equivalent driver replications",
+     "type": "switch"
+    },
+    "-carry_remap": {
+     "help": "Remap carries into luts",
+     "type": "switch"
+    },
+    "-memory_opt": {
+     "help": "Perform Memory optimization on underutilized XPM memories",
+     "type": "switch"
+    }
+   },
+   "excluded_options": {
+    "-mbufg_opt": "Versal MBUFG only",
+    "-srl_remap_modes": "structured argument; deferred to L3",
+    "-property_opt_only": "property-driven only",
+    "-quiet": "message control",
+    "-verbose": "message control"
+   },
+   "excluded_directives": {
+    "RQS": "needs a report_qor_suggestions file; deferred"
+   },
+   "directive_combinable": []
+  },
+  "place": {
+   "vivado_command": "place_design",
+   "directives": {
+    "Explore": {
+     "source": "help"
+    },
+    "RuntimeOptimized": {
+     "source": "help"
+    },
+    "Quick": {
+     "source": "help"
+    },
+    "Default": {
+     "source": "help"
+    },
+    "WLDrivenBlockPlacement": {
+     "source": "UG904 legacy"
+    },
+    "EarlyBlockPlacement": {
+     "source": "UG904 legacy"
+    },
+    "ExtraNetDelay_high": {
+     "source": "UG904 legacy"
+    },
+    "ExtraNetDelay_low": {
+     "source": "UG904 legacy"
+    },
+    "AltSpreadLogic_high": {
+     "source": "UG904 legacy"
+    },
+    "AltSpreadLogic_medium": {
+     "source": "UG904 legacy"
+    },
+    "AltSpreadLogic_low": {
+     "source": "UG904 legacy"
+    },
+    "ExtraPostPlacementOpt": {
+     "source": "UG904 legacy"
+    },
+    "ExtraTimingOpt": {
+     "source": "UG904 legacy"
+    },
+    "AltWLDrivenPlacement": {
+     "source": "UG904 legacy"
+    }
+   },
+   "options": {
+    "-no_timing_driven": {
+     "help": "Do not run in timing driven mode",
+     "type": "switch"
+    },
+    "-post_place_opt": {
+     "help": "(Not applicable for Advanced Flow) Run only the post commit optimizer",
+     "type": "switch"
+    },
+    "-no_psip": {
+     "help": "Disable PSIP (Physical Synthesis In Placer) optimization during placement.",
+     "type": "switch"
+    },
+    "-no_bufg_opt": {
+     "help": "Disable global buffer insertion during placement",
+     "type": "switch"
+    },
+    "-net_delay_weight": {
+     "help": "Specify net delay weight to be used, valid options are low, medium, high Default: low",
+     "type": "choice",
+     "values": [
+      "low",
+      "medium",
+      "high"
+     ]
+    }
+   },
+   "excluded_options": {
+    "-eco": "ECO mode for added cells only",
+    "-timing_summary": "reporting only",
+    "-unplace": "flow plumbing (pramana inserts it)",
+    "-clock_vtree_type": "Versal SSIT only",
+    "-ultrathreads": "runtime only, changes nothing else",
+    "-no_noc_opt": "Versal NoC only",
+    "-quiet": "message control",
+    "-verbose": "message control",
+    "-sll_align_opt": "SSI-only; part has one SLR",
+    "-psip_options": "failed capability probe",
+    "-subdirective": "no value passed the capability probe"
+   },
+   "excluded_directives": {},
+   "directive_combinable": [
+    "-net_delay_weight",
+    "-no_psip",
+    "-subdirective"
+   ]
+  },
+  "phys_opt": {
+   "vivado_command": "phys_opt_design",
+   "directives": {
+    "Explore": {
+     "source": "help"
+    },
+    "ExploreWithHoldFix": {
+     "source": "help"
+    },
+    "ExploreWithAggressiveHoldFix": {
+     "source": "help"
+    },
+    "AggressiveExplore": {
+     "source": "help"
+    },
+    "AlternateReplication": {
+     "source": "help"
+    },
+    "AggressiveFanoutOpt": {
+     "source": "help"
+    },
+    "AlternateFlowWithRetiming": {
+     "source": "help"
+    },
+    "AddRetime": {
+     "source": "help"
+    },
+    "RuntimeOptimized": {
+     "source": "help"
+    },
+    "Default": {
+     "source": "help"
+    }
+   },
+   "options": {
+    "-fanout_opt": {
+     "help": "Do cell-duplication based optimization on high-fanout timing critical nets",
+     "type": "switch",
+     "postroute": false
+    },
+    "-placement_opt": {
+     "help": "Do placement based optimization on timing critical nets",
+     "type": "switch",
+     "postroute": true
+    },
+    "-routing_opt": {
+     "help": "Do routing based optimization on timing critical nets",
+     "type": "switch",
+     "postroute": true
+    },
+    "-insert_negative_edge_ffs": {
+     "help": "Insert negative edge triggered FFs for hold optimization",
+     "type": "switch",
+     "postroute": true
+    },
+    "-restruct_opt": {
+     "help": "Do LUT restructuring optimization",
+     "type": "switch",
+     "postroute": true
+    },
+    "-interconnect_retime": {
+     "help": "Do interconnect retiming optimization",
+     "type": "switch",
+     "postroute": true
+    },
+    "-lut_opt": {
+     "help": "Do single LUT replacement/replication optimization",
+     "type": "switch",
+     "postroute": true
+    },
+    "-casc_opt": {
+     "help": "Do LUT cascade placement/replication optimization",
+     "type": "switch",
+     "postroute": true
+    },
+    "-cell_group_opt": {
+     "help": "Do critical cell group optimization",
+     "type": "switch",
+     "postroute": true
+    },
+    "-equ_drivers_opt": {
+     "help": "Rewiring load pins to equivalent drivers",
+     "type": "switch",
+     "postroute": true
+    },
+    "-critical_cell_opt": {
+     "help": "Do cell-duplication based optimization on timing critical nets",
+     "type": "switch",
+     "postroute": true
+    },
+    "-dsp_register_opt": {
+     "help": "Do DSP register optimization",
+     "type": "switch",
+     "postroute": false
+    },
+    "-bram_register_opt": {
+     "help": "Do BRAM register optimization",
+     "type": "switch",
+     "postroute": false
+    },
+    "-uram_register_opt": {
+     "help": "Do UltraRAM register optimization",
+     "type": "switch",
+     "postroute": false
+    },
+    "-bram_enable_opt": {
+     "help": "Do BRAM enable optimization",
+     "type": "switch",
+     "postroute": false
+    },
+    "-shift_register_opt": {
+     "help": "Do Shift register optimization",
+     "type": "switch",
+     "postroute": false
+    },
+    "-hold_fix": {
+     "help": "Attempt to improve slack of high hold violators",
+     "type": "switch",
+     "postroute": true
+    },
+    "-aggressive_hold_fix": {
+     "help": "Attempt to aggressively improve slack of high hold violators",
+     "type": "switch",
+     "postroute": true
+    },
+    "-retime": {
+     "help": "Do retiming optimization",
+     "type": "switch",
+     "postroute": true
+    },
+    "-critical_pin_opt": {
+     "help": "Do pin-swapping based optimization on timing critical nets",
+     "type": "switch",
+     "postroute": true
+    },
+    "-clock_opt": {
+     "help": "Do clock skew optimization in post-route optimization",
+     "type": "switch",
+     "postroute": true
+    },
+    "-tns_cleanup": {
+     "help": "Work on all nets in the design that meet criteria for the specified optimizations to improve design tns",
+     "type": "switch",
+     "postroute": true
+    },
+    "-memory_rewire_opt": {
+     "help": "Do memory pin-swapping based optimization on timing critical nets",
+     "type": "switch",
+     "postroute": true
+    }
+   },
+   "excluded_options": {
+    "-force_replication_on_nets": "targeting argument (L3)",
+    "-path_groups": "targeting argument",
+    "-quiet": "message control",
+    "-verbose": "message control",
+    "-slr_crossing_opt": "SSI-only; part has one SLR",
+    "-sll_reg_hold_fix": "SSI-only; part has one SLR"
+   },
+   "excluded_directives": {
+    "RQS": "needs a report_qor_suggestions file; deferred"
+   },
+   "directive_combinable": []
+  },
+  "route": {
+   "vivado_command": "route_design",
+   "directives": {
+    "Explore": {
+     "source": "help"
+    },
+    "AggressiveExplore": {
+     "source": "help"
+    },
+    "NoTimingRelaxation": {
+     "source": "help"
+    },
+    "MoreGlobalIterations": {
+     "source": "help"
+    },
+    "HigherDelayCost": {
+     "source": "help"
+    },
+    "AdvancedSkewModeling": {
+     "source": "help"
+    },
+    "AlternateCLBRouting": {
+     "source": "help"
+    },
+    "RuntimeOptimized": {
+     "source": "help"
+    },
+    "Quick": {
+     "source": "help"
+    },
+    "Default": {
+     "source": "help"
+    }
+   },
+   "options": {
+    "-tns_cleanup": {
+     "help": "Do optional TNS clean up.",
+     "type": "switch"
+    },
+    "-no_timing_driven": {
+     "help": "Do not run in timing driven mode.",
+     "type": "switch"
+    },
+    "-preserve": {
+     "help": "Preserve existing routing.",
+     "type": "switch"
+    },
+    "-no_psir": {
+     "help": "skips Physical Synthesis in Router phase.",
+     "type": "switch"
+    },
+    "+ripup": {
+     "type": "switch",
+     "why": "full rip-up vs incremental re-route",
+     "help": ""
+    }
+   },
+   "excluded_options": {
+    "-unroute": "flow plumbing",
+    "-release_memory": "memory housekeeping",
+    "-nets": "targeting argument (L3)",
+    "-physical_nets": "targeting argument",
+    "-pins": "targeting argument (L3)",
+    "-delay": "needs -nets/-pins",
+    "-auto_delay": "needs -nets/-pins",
+    "-max_delay": "needs -pins",
+    "-min_delay": "needs -pins",
+    "-timing_summary": "reporting only",
+    "-finalize": "incremental-flow plumbing",
+    "-ultrathreads": "runtime only, changes nothing else",
+    "-eco": "ECO mode for added cells only",
+    "-quiet": "message control",
+    "-verbose": "message control"
+   },
+   "excluded_directives": {},
+   "directive_combinable": [
+    "-preserve",
+    "-tns_cleanup"
+   ]
+  }
+ },
+ "n_slr": 1,
+ "size": {
+  "per_command": {
+   "opt": 1310726,
+   "place": 176,
+   "phys_opt": 8388618,
+   "route": 112
+  },
+  "single_steps": 9699632,
+  "chains_up_to_3": 912569222663659199024,
+  "log10_chains": 20.96
+ },
+ "probed": true,
+ "postroute_probed": true
+}

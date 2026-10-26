@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from . import corpus
+from . import corpus, store
 from .config import Config
 from .features import from_profile
 from .runner import Runner
@@ -15,6 +15,8 @@ class Campaign:
         self.cfg = cfg
         self.root = cfg.root
         self.runner = Runner(cfg)
+        # reference runs live in the framework store, shared by all campaigns
+        self.store_runner = Runner(cfg, store.runs_root(cfg))
 
     # ---------------------------------------------------------------- designs
     def designs(self) -> list[dict]:
@@ -27,13 +29,15 @@ class Campaign:
         return next(d for d in corpus.load(self.root) if d["id"] == did)
 
     def profile(self, did: str) -> dict:
-        return json.loads((self.root / "profile" / did / "profile.json").read_text())
+        return json.loads((self.profile_dir(did) / "profile.json").read_text())
 
     def profile_dir(self, did: str) -> Path:
-        return self.root / "profile" / did
+        p = store.profile_dir(self.cfg, self.design(did))
+        old = self.root / "profile" / did          # campaigns made before the store
+        return old if not p.exists() and old.exists() else p
 
     def features(self, did: str) -> dict:
-        p = self.root / "profile" / did / "features.json"
+        p = self.profile_dir(did) / "features.json"
         if not p.exists():
             p.write_text(json.dumps(from_profile(self.profile_dir(did)), indent=1))
         return json.loads(p.read_text())
@@ -47,8 +51,23 @@ class Campaign:
         return {"id": "input", "dcp": d["path"], "wns": self.profile(did)["input"]["wns"]}
 
     def results(self, did: str | None = None) -> list[dict]:
-        rs = self.runner.load()
-        return [r for r in rs if did is None or r["design"] == did]
+        """This campaign's runs plus the store's reference runs for its DCPs (same md5)."""
+        md5 = {d["id"]: d["md5"] for d in self.designs()}
+        own = self.runner.load()
+        shared = [r for r in self.store_runner.load() if md5.get(r["design"]) == r.get("dcp_md5")]
+        if shared:
+            # a run id can appear in both (campaigns made before the store); keep the record
+            # with the most final status, own record on ties
+            rank = {"ok": 3, "error": 2}
+            ids = {r["run_id"]: i for i, r in enumerate(own)}
+            for r in shared:
+                i = ids.get(r["run_id"])
+                if i is None:
+                    ids[r["run_id"]] = len(own)
+                    own.append(r)
+                elif rank.get(r["status"], 0) > rank.get(own[i]["status"], 0):
+                    own[i] = r
+        return [r for r in own if did is None or r["design"] == did]
 
     def best_state(self, did: str) -> dict:
         """Best legal state so far with a saved checkpoint (start point for the next depth)."""
@@ -95,9 +114,10 @@ class Campaign:
         return out
 
     def job(self, did: str, state: dict, chain: list[dict], purpose: str, **kw) -> dict:
+        d = self.design(did)
         return {"design": did, "start": state["id"], "start_dcp": state["dcp"],
                 "start_wns": state["wns"], "chain": chain, "purpose": purpose,
-                "dcp_mb": self.design(did)["dcp_mb"], **kw}
+                "dcp_mb": d["dcp_mb"], "dcp_md5": d["md5"], **kw}
 
     def noise_floor(self, did: str) -> float:
         """From repeated identical runs; at least cfg.noise_floor_ns."""

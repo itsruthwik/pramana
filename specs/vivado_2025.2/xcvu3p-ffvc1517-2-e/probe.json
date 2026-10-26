@@ -1,0 +1,68 @@
+{
+ "place": {
+  "invalid_directives": [
+   "AggressiveExplore"
+  ],
+  "invalid_values": {
+   "-subdirective": [
+    "Floorplan.RuntimeOptimized",
+    "GPlace.RuntimeOptimized",
+    "DPlace.RuntimeOptimized",
+    "Floorplan.ExtraTimingUpdate",
+    "GPlace.ExtraTimingUpdate",
+    "DPlace.ExtraTimingUpdate",
+    "Floorplan.ExtraTimingOpt.low",
+    "Floorplan.ExtraTimingOpt.med",
+    "Floorplan.ExtraTimingOpt.high",
+    "GPlace.ExtraTimingOpt.low",
+    "GPlace.ExtraTimingOpt.med",
+    "GPlace.ExtraTimingOpt.high",
+    "DPlace.ExtraTimingOpt.low",
+    "DPlace.ExtraTimingOpt.med",
+    "DPlace.ExtraTimingOpt.high",
+    "Floorplan.BalancedSLR.low",
+    "Floorplan.BalancedSLR.med",
+    "Floorplan.BalancedSLR.high",
+    "Floorplan.ForceSpreading.low",
+    "Floorplan.ForceSpreading.med",
+    "Floorplan.ForceSpreading.high",
+    "GPlace.ForceSpreading.low",
+    "GPlace.ForceSpreading.med",
+    "GPlace.ForceSpreading.high",
+    "GPlace.ReduceCongestion.low",
+    "GPlace.ReduceCongestion.med",
+    "GPlace.ReduceCongestion.high",
+    "Floorplan.WLDrivenBlockPlacement",
+    "GPlace.WLDrivenBlockPlacement",
+    "DPlace.ReducePinDensity.low",
+    "DPlace.ReducePinDensity.med",
+    "DPlace.ReducePinDensity.high",
+    "GPlace.EarlyBlockPlacement"
+   ]
+  },
+  "invalid_options": [
+   "-psip_options"
+  ],
+  "errors": {
+   "place:AggressiveExplore": "ERROR: [Common 17-69] Command failed: Placer could not place all instances ",
+   "place[-subdirective=Floorplan.RuntimeOptimized]": "ERROR: [Vivado_Tcl 4-2310] The option -subdirective is not supported for part xcvu3p-ffvc1517-2-e. ",
+   "place[-subdirective=GPlace.RuntimeOptimized]": "ERROR: [Vivado_Tcl 4-2310] The option -subdirective is not supported for part xcvu3p-ffvc1517-2-e. ",
+   "place[-subdirective=DPlace.RuntimeOptimized]": "ERROR: [Vivado_Tcl 4-2310] The option -subdirective is not supported for part xcvu3p-ffvc1517-2-e. ",
+   "place[-subdirective=Floorplan.ExtraTimingUpdate]": "ERROR: [Vivado_Tcl 4-2310] The option -subdirective is not supported for part xcvu3p-ffvc1517-2-e. ",
+   "place[-subdirective=GPlace.ExtraTimingUpdate]": "ERROR: [Vivado_Tcl 4-2310] The option -subdirective is not supported for part xcvu3p-ffvc1517-2-e. ",
+   "place[-subdirective=DPlace.ExtraTimingUpdate]": "ERROR: [Vivado_Tcl 4-2310] The option -subdirective is not supported for part xcvu3p-ffvc1517-2-e. ",
+   "place[-subdirective=Floorplan.ExtraTimingOpt.low]": "ERROR: [Vivado_Tcl 4-2310] The option -subdirective is not supported for part xcvu3p-ffvc1517-2-e. ",
+   "place[-subdirective=GPlace.ExtraTimingOpt.low]": "ERROR: [Vivado_Tcl 4-2310] The option -subdirective is not supported for part xcvu3p-ffvc1517-2-e. ",
+   "place[-subdirective=DPlace.ExtraTimingOpt.low]": "ERROR: [Vivado_Tcl 4-2310] The option -subdirective is not supported for part xcvu3p-ffvc1517-2-e. ",
+   "place[-subdirective=Floorplan.BalancedSLR.low]": "ERROR: [Vivado_Tcl 4-2310] The option -subdirective is not supported for part xcvu3p-ffvc1517-2-e. ",
+   "place[-subdirective=Floorplan.ForceSpreading.low]": "ERROR: [Vivado_Tcl 4-2310] The option -subdirective is not supported for part xcvu3p-ffvc1517-2-e. ",
+   "place[-subdirective=GPlace.ForceSpreading.low]": "ERROR: [Vivado_Tcl 4-2310] The option -subdirective is not supported for part xcvu3p-ffvc1517-2-e. ",
+   "place[-subdirective=GPlace.ReduceCongestion.low]": "ERROR: [Vivado_Tcl 4-2310] The option -subdirective is not supported for part xcvu3p-ffvc1517-2-e. ",
+   "place[-subdirective=Floorplan.WLDrivenBlockPlacement]": "ERROR: [Vivado_Tcl 4-2310] The option -subdirective is not supported for part xcvu3p-ffvc1517-2-e. ",
+   "place[-subdirective=GPlace.WLDrivenBlockPlacement]": "ERROR: [Vivado_Tcl 4-2310] The option -subdirective is not supported for part xcvu3p-ffvc1517-2-e. ",
+   "place[-subdirective=DPlace.ReducePinDensity.low]": "ERROR: [Vivado_Tcl 4-2310] The option -subdirective is not supported for part xcvu3p-ffvc1517-2-e. ",
+   "place[-subdirective=GPlace.EarlyBlockPlacement]": "ERROR: [Vivado_Tcl 4-2310] The option -subdirective is not supported for part xcvu3p-ffvc1517-2-e. ",
+   "place[-psip_options=critical_cell_opt]": "ERROR: [Vivado_Tcl 4-2585] The option -psip_options is not supported for part xcvu3p-ffvc1517-2-e. "
+  }
+ }
+}
