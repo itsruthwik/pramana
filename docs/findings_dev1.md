@@ -59,3 +59,15 @@ rosetta_digit-recognition, LU32PEEng, bnn).
 - Crash retry; shared memory gate; thread-perturbed repeats for noise.
 - Discovery agents stay in their own directory (one wrote files into the repo root).
 - Weak conditions graded D.
+
+## Evaluation on eval1 (5 unseen designs, 3000 s budget, ΔWNS ns vs input)
+| design | dev1 policy | best single Explore baseline |
+|--|--|--|
+| corescore_500_mod | +0.477 | +0.099 (place Default > phys_opt Explore) |
+| finn_radioml | +0.646 | +0.563 (opt Explore / place Default) |
+| rosetta_digit-recognition | +0.378 | +0.111 (place Default > phys_opt Explore) |
+| LU32PEEng | +3.314 | +2.606 (place Default > phys_opt Explore) |
+| bnn | +0.258 | +0.233 (place Default > phys_opt Explore) |
+
+All valid. The policy beats the best single baseline on 5/5, but it also uses more time
+(41–67 min vs one baseline run); a same-time comparison is still to do.
