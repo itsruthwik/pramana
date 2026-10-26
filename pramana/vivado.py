@@ -1,6 +1,8 @@
 """Run one Vivado batch process, with a timeout and a free-memory gate."""
 from __future__ import annotations
 
+import fcntl
+import json
 import os
 import signal
 import subprocess
@@ -10,7 +12,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _launch_lock = threading.Lock()
-_recent: list[tuple[float, float]] = []   # (launch time, reserved GB)
+# Reservations are shared by every pramana process on the machine (file lock + json list of
+# [launch time, reserved GB]), so concurrent campaigns don't each see the same free memory.
+_SHARED = Path(os.environ.get("PRAMANA_LAUNCH_FILE", "/tmp/pramana_launches.json"))
+_RECENT_S = 300
 
 
 @dataclass
@@ -36,6 +41,13 @@ def wait_for_memory(need_gb: float, poll_s: float = 20.0) -> None:
         time.sleep(poll_s)
 
 
+def _read_shared() -> list[tuple[float, float]]:
+    try:
+        return [tuple(x) for x in json.loads(_SHARED.read_text())]
+    except Exception:
+        return []
+
+
 def run_vivado(script: Path, cwd: Path, settings: str, timeout_s: float,
                need_gb: float = 4.0) -> VivadoResult:
     cwd = Path(cwd).resolve()
@@ -45,17 +57,23 @@ def run_vivado(script: Path, cwd: Path, settings: str, timeout_s: float,
            f"-source {script} -log {cwd/'vivado.log'} -journal {cwd/'vivado.jou'}")
     # Launches are serialised; jobs launched in the last few minutes haven't reached their
     # peak yet, so their growth is reserved on top of this job's need.
-    with _launch_lock:
+    with _launch_lock, open(str(_SHARED) + ".lock", "a+") as lk:
         while True:
+            fcntl.flock(lk, fcntl.LOCK_EX)
             now = time.time()
-            _recent[:] = [(t, g) for t, g in _recent if now - t < 300]
-            if free_mem_gb() >= need_gb + 0.5 * sum(g for _, g in _recent):
+            recent = [(t, g) for t, g in _read_shared() if now - t < _RECENT_S]
+            if free_mem_gb() >= need_gb + 0.5 * sum(g for _, g in recent):
                 break
+            fcntl.flock(lk, fcntl.LOCK_UN)
             time.sleep(20)
-        _recent.append((time.time(), need_gb))
-        proc = subprocess.Popen(["bash", "-c", cmd], cwd=str(cwd), stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True, start_new_session=True)
-        time.sleep(5)
+        try:
+            recent.append((time.time(), need_gb))
+            _SHARED.write_text(json.dumps(recent))
+            proc = subprocess.Popen(["bash", "-c", cmd], cwd=str(cwd), stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, text=True, start_new_session=True)
+            time.sleep(5)
+        finally:
+            fcntl.flock(lk, fcntl.LOCK_UN)
     t0 = time.time()
     timed_out = False
     try:
