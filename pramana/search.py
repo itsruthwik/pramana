@@ -122,7 +122,7 @@ def audit_step(spec: dict, cuts: list[dict], rng: random.Random) -> dict | None:
                 st = {"cmd": cmd, "opts": {flag: int(val)}}
             else:
                 st = {"cmd": cmd, "opts": {flag: val}}
-        if st and space.legal(st, spec):
+        if st and space.legal(st, spec) and space.chain_ok([st], spec):
             return st
     return None
 
@@ -159,7 +159,7 @@ def allocate(c: Campaign, did: str, pr: dict, start: dict, rnd: int, w_llm: floa
             cands.setdefault(chain_key([st]), {"chain": [st], "pred": None, "src": "random_in"})
     scored = []
     for k, cd in cands.items():
-        if (start["id"], k) in done:
+        if (start["id"], k) in done or not space.chain_ok(cd["chain"], spec):
             continue
         v, bonus = bandit_parts(cd["chain"], stats, n_total, scale)
         s = ((1 - w_llm) * v + w_llm * cd["pred"] if cd["pred"] is not None else v) + bonus
@@ -193,7 +193,7 @@ def allocate(c: Campaign, did: str, pr: dict, start: dict, rnd: int, w_llm: floa
     for h in pr.get("hypotheses", []):
         if h.get("test_chain"):
             k = chain_key(h["test_chain"])
-            if (start["id"], k) not in done and k not in chosen:
+            if (start["id"], k) not in done and k not in chosen and space.chain_ok(h["test_chain"], spec):
                 tests.append(c.job(did, start, h["test_chain"], "test", round=rnd, tag="hypothesis"))
     inp = c.input_state(did)
     floor = [{"cmd": cm, "directive": d} for cm, cc in spec["commands"].items()

@@ -163,7 +163,7 @@ def validate(spec: dict, out: dict, prev_cuts: set[str] | None = None) -> dict:
     props, bad = [], []
     for p in out.get("proposals", []):
         chain = [clean_step(s) for s in p["chain"]]
-        if chain and all(space.legal(s, spec) for s in chain):
+        if chain and all(space.legal(s, spec) for s in chain) and space.chain_ok(chain, spec):
             props.append({**p, "chain": chain, "in_allowed": all(in_allowed(s, allowed) for s in chain)})
         else:
             bad.append(p)

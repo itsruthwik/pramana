@@ -150,6 +150,7 @@ def space_brief(spec: dict) -> str:
         out.append("directives: " + ", ".join(cmd["directives"]))
         for k, o in cmd["options"].items():
             vals = f" values={o['values']}" if "values" in o else ""
-            out.append(f"  {k} [{o['type']}{', max_pick=' + str(o['max_pick']) if o.get('max_pick') else ''}]"
+            pre = " [PRE-ROUTE ONLY: Vivado rejects it on a routed design]" if o.get("postroute") is False else ""
+            out.append(f"  {k} [{o['type']}{', max_pick=' + str(o['max_pick']) if o.get('max_pick') else ''}]{pre}"
                        f"{vals}: {o.get('help') or o.get('why', '')}"[:400])
     return "\n".join(out)

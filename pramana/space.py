@@ -45,7 +45,7 @@ NOT_LEVERS = {
 # Options that only act on multi-SLR (SSI) devices.
 SSI_ONLY = {"-slr_crossing_opt", "-sll_reg_hold_fix", "-sll_align_opt"}
 # Numeric options: the levels searched (Vivado gives no range in help; values from UG904).
-NUMERIC_LEVELS = {"-hier_fanout_limit": [64, 256, 512, 1024]}
+NUMERIC_LEVELS = {"-hier_fanout_limit": [512, 1024, 2048, 4096]}   # Vivado minimum is 512
 # Choice options with documented values.
 CHOICES = {"-net_delay_weight": ["low", "medium", "high"]}
 # Which options may be combined with -directive (from each command's help 'Note/Important').
@@ -314,6 +314,28 @@ def legal(step: dict, spec: dict) -> bool:
     elif step["cmd"] in ("opt", "phys_opt") and not [k for k in opts if not k.startswith("+")]:
         # no directive and no option = Default directive; represent it explicitly
         return False
+    return True
+
+
+def chain_ok(chain: list[dict], spec: dict) -> bool:
+    """Context legality: a phys_opt step on a ROUTED design may only use options that pass
+    the post-route probe (Vivado rejects e.g. -bram_register_opt after routing)."""
+    state = "routed"
+    for st in chain:
+        if (st.get("directive") or st.get("opts")) and not legal(st, spec):
+            return False   # bare {"cmd": "route"} / {"cmd": "place"} = defaults, always fine
+        c = st["cmd"]
+        if c in ("opt", "place"):
+            state = "unplaced" if c == "opt" else "placed"
+        elif c == "phys_opt":
+            if state == "unplaced":
+                state = "placed"
+            if state == "routed":
+                opts = spec["commands"]["phys_opt"]["options"]
+                if any(opts.get(k, {}).get("postroute") is False for k in (st.get("opts") or {})):
+                    return False
+        elif c == "route":
+            state = "routed"
     return True
 
 
