@@ -34,11 +34,11 @@ write files outside your working directory. After your recipe, pramana re-routes
 design is not fully routed, then measures. A result counts only if fully routed with WHS >= 0.
 
 ## How to run trials (budget: {max_trials} trials; each takes minutes)
-  python -m pramana.trial {campaign} {design} submit recipe_NAME.tcl   # prints trial id, e.g. t01
-  python -m pramana.trial {campaign} {design} wait t01                 # blocks <= 9 min; repeat if still running
-  python -m pramana.trial {campaign} {design} list
-Run these from {repo} (cd there or use absolute paths for the recipe). Use a Bash timeout of
-600000 ms for `wait`. You may submit up to 3 trials before waiting.
+  ./trial submit recipe_NAME.tcl   # prints trial id, e.g. t01
+  ./trial wait t01                 # blocks <= 9 min; repeat if still running
+  ./trial list
+Stay in your working directory (the current directory); keep all your files there. Use a Bash
+timeout of 600000 ms for `wait`. You may submit up to 3 trials before waiting.
 
 Useful tools (all Vivado Tcl): get_timing_paths -max_paths N -nworst 1, get_cells/get_nets
 -of_objects, get_property, set_property (e.g. on cells/nets), phys_opt_design with targeted
@@ -66,6 +66,10 @@ def run(c: Campaign, log=print, max_trials: int | None = None, designs: list[str
         if (td / "candidates.json").exists():
             return
         td.mkdir(parents=True, exist_ok=True)
+        wrapper = td / "trial"
+        wrapper.write_text(f'#!/bin/bash\nexport PYTHONPATH={REPO}${{PYTHONPATH:+:$PYTHONPATH}}\n'
+                           f'exec {sys.executable} -m pramana.trial {c.cfg.name} {did} "$@"\n')
+        wrapper.chmod(0o755)
         best = c.best_state(did)
         (td / "meta.json").write_text(json.dumps({"start": best["id"], "start_wns": best["wns"],
                                                   "max_trials": max_trials}))
@@ -73,7 +77,7 @@ def run(c: Campaign, log=print, max_trials: int | None = None, designs: list[str
             ver=c.cfg.vivado_version, brief=evidence.design_brief(c, did),
             results=evidence.results_table(c, did, limit=60), start=best["id"],
             start_wns=best["wns"], lineage=" > ".join(c.lineage(did, best["id"])) or "(input)",
-            max_trials=max_trials, campaign=c.cfg.name, design=did, repo=REPO)
+            max_trials=max_trials)
         log(f"[discover] {did}: agent starting from {best['id']} (WNS {best['wns']})")
         rec = llm.agent(c.cfg, "discover", did, prompt, cwd=td)
         log(f"[discover] {did}: agent done (turns={rec.get('num_turns')}, error={rec.get('is_error')})")
