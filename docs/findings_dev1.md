@@ -73,3 +73,19 @@ All valid. Time check: running all 6 Explore baselines and keeping the best take
 in total; the policy takes 41–67 min in one session and beats that best-of-6 on 5/5 designs
 (by +0.38, +0.08, +0.27, +0.71, +0.03 ns). The bnn and finn margins are small and the policy
 used 4–14 min more there; a strictly time-matched comparison is still to do.
+
+## dev2 vs dev1 on eval1 (same 5 unseen designs)
+dev2: 10 training designs, all post-dev1 fixes. Policy: place Default > phys_opt Explore,
+phys_opt AlternateReplication, route MoreGlobalIterations (each keep-if-better).
+
+| design | dev1 ΔWNS (min) | dev2 ΔWNS (min) |
+|--|--|--|
+| corescore_500_mod | +0.477 (41) | +0.481 (35) |
+| finn_radioml | +0.646 (49) | +0.642 (42) |
+| rosetta_digit-recognition | +0.378 (41) | +0.378 (28) |
+| LU32PEEng | +3.314 (67) | +3.462 (53) |
+| bnn | +0.258 (56) | +0.258 (43) |
+
+Same gain (LU32PEEng +0.15 ns better), 13–32% less time. Both policies share the first step
+(re-place + phys_opt Explore), which carries most of the gain; the later steps differ and add
+little. More training designs did not change the knowledge, only its cost.
