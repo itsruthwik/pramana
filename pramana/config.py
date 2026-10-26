@@ -23,7 +23,7 @@ class Config:
     vivado_version: str = VIVADO_VERSION
     threads: int = 4                  # fixed per run so run times are comparable
     workers: int = 4                  # parallel Vivado processes
-    min_free_mem_gb: float = 8.0      # never launch below this much free memory
+    min_free_mem_gb: float = 16.0      # never launch below this much free memory
     run_timeout_s: float = 4 * 3600
     # LLM (Claude Code headless, user's subscription)
     llm_model: str = "claude-sonnet-5-5"

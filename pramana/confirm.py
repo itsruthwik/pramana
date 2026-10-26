@@ -82,11 +82,15 @@ def run(c: Campaign, log=print) -> None:
             cands = json.loads(cand.read_text())
         except json.JSONDecodeError:
             continue
+        own = {r.get("tag"): r for r in c.results(d["id"]) if r["purpose"] == "discover"}
         for cd in cands[:2]:
             if not cd.get("general"):
                 continue
             tcl_p = c.root / "discover" / d["id"] / "trials" / f"{cd['trial']}.tcl"
-            if not tcl_p.exists():
+            r0 = own.get(cd["trial"])
+            # only recipes that actually beat their start state are worth transferring
+            if not tcl_p.exists() or not r0 or not r0["valid"] or \
+                    (r0["d_wns"] or 0) <= c.noise_floor(d["id"]):
                 continue
             tcl = tcl_p.read_text()
             for o in c.designs():
