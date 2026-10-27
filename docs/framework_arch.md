@@ -189,6 +189,15 @@ measured run, started and ended routed; discovered recipes are units that carry 
 and every lineage and reference policy is run on every other training design. Recipes that
 beat their own start state are run on every other design's best state.
 
+**Functional check.** A recipe whose Tcl edits the netlist directly (create/remove cells or
+nets, LUT INIT and other functional properties, or anything the static scan can't resolve)
+is simulated against its start state with random vectors (`pramana.funccheck`: funcsim
+netlists in xsim, every output compared each cycle). Mismatching recipes are rejected; ones
+not checked or inconclusive stay in the KB as data but are never compiled into a bundle.
+Vivado's own commands (opt, place, phys_opt, route) are trusted. This is sampled, not proof:
+on vexriscv it caught 7 of 12 single-LUT mutations. Of the first 180 discovered recipes, none
+edited the netlist directly.
+
 **Why.** Separates design-specific tricks (kept, labelled as such) from general knowledge,
 and fills the design × policy matrix the policy and bin choices are made from. Only new
 design × policy pairs run, so adding a design costs about 2n runs, not n².

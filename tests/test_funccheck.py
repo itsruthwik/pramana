@@ -88,3 +88,10 @@ def test_testbench_drives_inputs_and_holds_reset(tmp_path):
     rcol = 2                                    # din bits: d[1], d[0], rst_n (sorted groups)
     assert all(not (r >> rcol) & 1 for r in rows[:10])          # active-low: held 0
     assert all((r >> rcol) & 1 for r in rows[10:50])
+
+
+def test_condition_variables_are_not_commands():
+    from pramana.funccheck import scan_netlist_edits
+    assert scan_netlist_edits('if {$n ne ""} {lappend nets $n}') == []
+    assert scan_netlist_edits("for {set i 0} {$i < 3} {incr i} {phys_opt_design}") == []
+    assert scan_netlist_edits("set c remove_cell\n$c foo") != []

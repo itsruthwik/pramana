@@ -108,3 +108,46 @@ def run(c: Campaign, log=print) -> None:
     jobs.sort(key=lambda j: j["dcp_mb"])
     c.runner.run_many(jobs, log=log)
     log(f"[confirm] {len(pols)} policies x {len(c.designs())} designs; recipes transferred")
+    functional_checks(c, log)
+
+
+def functional_checks(c: Campaign, log=print) -> None:
+    """Recipes that edit the netlist directly (not through Vivado's own optimisation
+    commands) and gained on their own design: simulate the start state against the result
+    (funccheck: sampled random vectors, not proof). Results go to
+    discover/<design>/funccheck_<trial>.json; distill reads them."""
+    from concurrent.futures import ThreadPoolExecutor
+    from . import funccheck
+    todo = []
+    for d in c.designs():
+        did = d["id"]
+        cand = c.root / "discover" / did / "candidates.json"
+        if not cand.exists():
+            continue
+        try:
+            cands = json.loads(cand.read_text())
+        except json.JSONDecodeError:
+            continue
+        own = {r.get("tag"): r for r in c.results(did) if r["purpose"] == "discover"}
+        for cd in cands[:3]:
+            tcl_p = c.root / "discover" / did / "trials" / f"{cd.get('trial')}.tcl"
+            r0 = own.get(cd.get("trial"))
+            out_p = c.root / "discover" / did / f"funccheck_{cd.get('trial')}.json"
+            if out_p.exists() or not tcl_p.exists() or not r0 or not r0["valid"] \
+                    or not r0.get("dcp") or (r0["d_wns"] or 0) <= c.noise_floor(did):
+                continue
+            if not funccheck.edits_netlist(tcl_p.read_text()):
+                continue
+            start = c.state(did, r0["start"])
+            todo.append((did, cd["trial"], start["dcp"], r0["dcp"], out_p))
+
+    def one(t):
+        did, trial, a, b, out_p = t
+        try:
+            res = funccheck.check(a, b, out_p.parent / f"funccheck_{trial}")
+        except Exception as e:   # a failed check leaves the recipe unverified
+            res = {"status": "error", "error": str(e)[:500]}
+        out_p.write_text(json.dumps(res, indent=1))
+        log(f"[confirm] functional check {did}:{trial}: {res['status']}")
+    with ThreadPoolExecutor(2) as ex:
+        list(ex.map(one, todo))

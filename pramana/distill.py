@@ -15,7 +15,7 @@ import statistics
 import time
 from collections import defaultdict
 
-from . import llm
+from . import funccheck, llm
 from .campaign import Campaign
 from .features import FEATURE_DOC, rule_features
 from .logparse import pass_effects
@@ -643,7 +643,18 @@ def recipes(c: Campaign) -> list[dict]:
             gains = {r["design"]: (r["d_wns"] if r["valid"] else INVALID) for r in tr}
             helped = [d for d, g in gains.items() if g > c.noise_floor(d)]
             scope = "general" if len(helped) >= 2 else "design_specific"
-            out.append({"name": cd.get("name"), "from_design": did, "tcl": tcl_p.read_text(),
+            tcl = tcl_p.read_text()
+            edits = funccheck.edits_netlist(tcl)
+            fc_p = c.root / "discover" / did / f"funccheck_{cd.get('trial')}.json"
+            fc = json.loads(fc_p.read_text()).get("status") if fc_p.exists() else None
+            functional = ("not needed (Vivado commands only)" if not edits else
+                          "equivalent (sampled simulation)" if fc == "equivalent" else
+                          "MISMATCH" if fc == "mismatch" else f"unverified ({fc or 'not run'})")
+            if edits and fc == "mismatch":
+                scope = "rejected"
+            out.append({"name": cd.get("name"), "trial": cd.get("trial"), "from_design": did,
+                        "tcl": tcl, "edits_netlist": edits, "functional": functional,
+                        "usable": not edits or fc == "equivalent",
                         "rationale": cd.get("rationale"), "own_d_wns": own[0]["d_wns"] if own else None,
                         "own_valid": own[0]["valid"] if own else None,
                         "repeat_d_wns": rep[0]["d_wns"] if rep else None,

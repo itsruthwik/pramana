@@ -177,6 +177,10 @@ def _safe_prop(name: str) -> bool:
     return u in SAFE_PROPS or u.startswith(SAFE_PROP_PREFIXES)
 
 
+_EXPR_OPS = {"ne", "eq", "in", "ni", "<", ">", "<=", ">=", "==", "!=", "&&", "||", "+", "-",
+             "*", "/", "%"}
+
+
 def scan_netlist_edits(tcl: str, include_vivado_opt: bool = False) -> list[str]:
     """Reasons (one string per finding) why `tcl` may change the logical netlist; [] if none.
 
@@ -193,7 +197,10 @@ def scan_netlist_edits(tcl: str, include_vivado_opt: bool = False) -> list[str]:
         if not pre or pre[-1] in "\n;[{":
             found.append(f"dynamic:{m.group(1)}")
     # a command word that is itself a substitution: `$cmd ...` / `[...] ...` at command start
-    for m in re.finditer(r"(?:^|[;{\n])[ \t]*(\$\w+)[ \t]", t):
+    for m in re.finditer(r"(?:^|[;{\n])[ \t]*(\$\w+)[ \t]+(\S+)", t):
+        # `{$n ne ""}` / `{$i < 3}`: an expression (if/for/while condition), not a command
+        if m.group(2) in _EXPR_OPS:
+            continue
         found.append(f"dynamic:{m.group(1)}")
     for m in re.finditer(_WORD.format("set_property"), t):
         rest = t[m.end():]

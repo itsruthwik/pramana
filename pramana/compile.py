@@ -10,7 +10,7 @@ import re
 import shutil
 from pathlib import Path
 
-from . import flow, profile as prof_mod, tcl
+from . import flow, funccheck, profile as prof_mod, tcl
 from .campaign import Campaign
 from .config import REPO
 from .space import chain_key, step_factors, step_key
@@ -38,9 +38,14 @@ def policy_steps(units: list[list[dict]], kb: dict) -> list[dict]:
     """One executable step per unit (a measured run: starts ROUTED, ends ROUTED), so each can
     be kept or reverted exactly as it was measured."""
     ship = _ship_by_factor(kb)
+    usable = {f"{r['from_design']}:{r.get('trial')}" for r in kb.get("recipes") or [] if r.get("usable")}
     out = []
     for u in units:
         if not u:   # campaigns before the tcl step type recorded recipe units as []
+            continue
+        # a custom-Tcl unit that edits the netlist ships only if it passed the functional check
+        if any(st["cmd"] == "tcl" and funccheck.edits_netlist(st["tcl"]) and st.get("name") not in usable
+               for st in u):
             continue
         cmds, kinds = [], []
         for name, cs, auto in flow.expand(u):
@@ -172,7 +177,7 @@ def recipes_tcl(kb: dict, b: dict) -> str:
                 out.append(f"    ::pramana::keep_if_better {{{s['name']}}} {{{body}}} $tmpdir")
         out.append("}")
     for r in kb["recipes"]:
-        if r.get("own_valid") and (r.get("own_d_wns") or 0) > 0:
+        if r.get("own_valid") and (r.get("own_d_wns") or 0) > 0 and r.get("usable", True):
             pname = _safe_name(f"recipe_{r['from_design']}_{r['name']}")
             out.append(f"# recipe {r['name']} from {r['from_design']} ({r['scope']}): "
                        f"{(r.get('rationale') or '')[:200]}")
@@ -260,13 +265,15 @@ def context_md(kb: dict, b: dict) -> str:
         for s in kb["signals"]:
             L.append(f"- {s['signal']}: P(gain) {s['p_gain_given_zero']} when it fires vs "
                      f"{s['p_gain_given_nonzero']} otherwise. {s['use']}.")
-    rec = [r for r in kb["recipes"] if r.get("own_valid") and (r.get("own_d_wns") or 0) > 0]
+    rec = [r for r in kb["recipes"] if r.get("own_valid") and (r.get("own_d_wns") or 0) > 0
+           and r.get("usable", True)]
     if rec:
         L += ["", "### Custom recipes found by discovery (procs in recipes.tcl)"]
         for r in rec:
             L.append(f"- ::pramana::{_safe_name('recipe_' + r['from_design'] + '_' + r['name'])}: "
                      f"{r['scope']}; own gain {r['own_d_wns']} ns; helped {len(r['helped_designs'])} "
-                     f"other designs. {(r.get('rationale') or '')[:200]}")
+                     f"other designs; functional check: {r.get('functional', 'n/a')}. "
+                     f"{(r.get('rationale') or '')[:200]}")
     if kb.get("notes"):
         L += ["", "### Why (mechanism notes)"]
         for k, v in kb["notes"].items():
