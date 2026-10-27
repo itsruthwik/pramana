@@ -16,6 +16,24 @@ _launch_lock = threading.Lock()
 # [launch time, reserved GB]), so concurrent campaigns don't each see the same free memory.
 _SHARED = Path(os.environ.get("PRAMANA_LAUNCH_FILE", "/tmp/pramana_launches.json"))
 _RECENT_S = 300
+# Machine-wide cap on concurrent Vivado runs from all pramana processes (training,
+# evaluations, discovery trials): a run must hold one of MAX_VIVADO lock-file slots.
+MAX_VIVADO = int(os.environ.get("PRAMANA_MAX_VIVADO", "4"))
+_SLOT_DIR = Path(os.environ.get("PRAMANA_SLOT_DIR", "/tmp/pramana_vivado_slots"))
+
+
+def _acquire_slot():
+    """Block until one of MAX_VIVADO slots is free; returns the open (locked) slot file."""
+    _SLOT_DIR.mkdir(parents=True, exist_ok=True)
+    while True:
+        for i in range(MAX_VIVADO):
+            f = open(_SLOT_DIR / f"slot{i}", "a+")
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return f
+            except BlockingIOError:
+                f.close()
+        time.sleep(10)
 
 
 @dataclass
@@ -55,6 +73,15 @@ def run_vivado(script: Path, cwd: Path, settings: str, timeout_s: float,
     script = Path(script).resolve()
     cmd = (f"source {settings} >/dev/null 2>&1 && exec vivado -mode batch -notrace "
            f"-source {script} -log {cwd/'vivado.log'} -journal {cwd/'vivado.jou'}")
+    slot = _acquire_slot()
+    try:
+        return _run_in_slot(cmd, cwd, timeout_s, need_gb)
+    finally:
+        fcntl.flock(slot, fcntl.LOCK_UN)
+        slot.close()
+
+
+def _run_in_slot(cmd: str, cwd: Path, timeout_s: float, need_gb: float) -> VivadoResult:
     # Launches are serialised; jobs launched in the last few minutes haven't reached their
     # peak yet, so their growth is reserved on top of this job's need.
     with _launch_lock, open(str(_SHARED) + ".lock", "a+") as lk:
