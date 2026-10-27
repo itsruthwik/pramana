@@ -45,7 +45,7 @@ response), `reports/` (checkpoint reports), `kb/kb.json`, `out/`.
 ## Settings
 
 - Vivado 2025.2 (`pramana/config.py`); fixed threads per run so run times are comparable.
-- LLM: Claude Code headless (`claude -p`), Sonnet 5.5, effort low, on the user's subscription.
+- LLM: regular Claude Code sessions (Sonnet 5.5, effort low, user subscription), one tmux session each (`tmux ls`, `tmux attach -t pr-<campaign>-<stage>-<name>`); saved like any session (`claude --resume`). The analyst is one session per design, resumed every round.
 - A result counts only if fully routed with 0 route errors, WHS ≥ 0 and WPWS ≥ 0.
 - Unit: ΔWNS in ns against the run's start state.
 

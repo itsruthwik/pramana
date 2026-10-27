@@ -176,6 +176,6 @@ The same KB compiles to:
 - A result counts only if fully routed, 0 route errors, WHS ≥ 0, WPWS ≥ 0.
 - Failure is decided from Tcl return codes and sentinels, never log phrasing.
 - Every LLM call is logged (prompt, response, model, cost) under the campaign.
-- LLM: Claude Code headless (`claude -p`), Sonnet 5.5, effort low, on the user's subscription.
+- LLM: regular Claude Code sessions (Sonnet 5.5, effort low, user subscription), one tmux session each (`tmux ls`, `tmux attach -t pr-<campaign>-<stage>-<name>`); saved like any session (`claude --resume`). The analyst is one session per design, resumed every round.
 - Vivado-only for v1 (2025.2: the local 2025.1 install has no UltraScale+ parts). One part per campaign.
 - Ship plain when the evidence is clear; keep-if-better only when it isn't.

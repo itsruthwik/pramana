@@ -195,7 +195,8 @@ def prune_design(c: Campaign, did: str, rnd: int, start: dict, extra: str = "",
         INSTRUCTIONS.format(n_total=n_total, n_keep=int(n_total * KEEP_FRACTION),
                             n_cut=n_total - int(n_total * KEEP_FRACTION)),
     ])
-    out = llm.ask(c.cfg, "prune", f"{did}_r{rnd}", prompt, SCHEMA, system=SYSTEM)
+    out = llm.ask(c.cfg, "prune", f"{did}_r{rnd}", prompt, SCHEMA, system=SYSTEM,
+                  key=f"analyst_{did}")
     if out is None:
         # LLM failure: keep the previous prune, or keep everything
         res = prev or validate(spec, {"cuts": [], "proposals": [], "hypotheses": []})
