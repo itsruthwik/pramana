@@ -24,11 +24,29 @@ REPEATS: list[str] = []
 REPEAT_THREADS = 2
 
 
+# Placer-directive sweep: every remaining placer directive once from the input. Placement
+# choice carried the largest transferable gains on eval1, and a portfolio of placements can
+# only be chosen from a design x directive matrix measured on every design. Quick and
+# RuntimeOptimized trade quality for speed and are left out.
+SWEEP_SKIP = {"Default", "Explore", "Quick", "RuntimeOptimized"}
+
+
+def place_sweep(spec: dict) -> dict[str, list[dict]]:
+    ds = spec["commands"]["place"]["directives"]
+    return {f"place_{d}": [{"cmd": "place", "directive": d}] for d in sorted(ds)
+            if d not in SWEEP_SKIP}
+
+
+def reference_chains(c: Campaign) -> dict[str, list[dict]]:
+    return {**BASELINES, **place_sweep(c.spec())}
+
+
 def jobs(c: Campaign) -> list[dict]:
     out = []
+    refs = reference_chains(c)
     for d in c.designs():
         st = c.input_state(d["id"])
-        for tag, chain in BASELINES.items():
+        for tag, chain in refs.items():
             out.append(c.job(d["id"], st, chain, "baseline", tag=tag))
         for tag in REPEATS:
             out.append(c.job(d["id"], st, BASELINES[tag], "baseline", tag=tag + "_rep", rep=1,

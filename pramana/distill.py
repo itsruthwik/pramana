@@ -19,7 +19,7 @@ from . import llm
 from .campaign import Campaign
 from .features import FEATURE_DOC, rule_features
 from .logparse import pass_effects
-from .space import step_factors
+from .space import step_factors, chain_key
 from pathlib import Path
 
 INVALID = -0.05
@@ -60,7 +60,8 @@ def action_profiles(c: Campaign) -> list[dict]:
     incr: dict[str, list[float]] = defaultdict(list)
     for r in c.results():
         if r["design"] not in ids or r.get("extra_tcl") or not r["chain"] \
-                or r["status"] not in ("ok", "error"):   # crashes are infrastructure, not results
+                or r["status"] not in ("ok", "error") \
+                or r["purpose"] == "probe":   # crashes: infrastructure; probes: support checks
             continue
         fs = set()
         for st in r["chain"]:
@@ -339,6 +340,75 @@ def policies(c: Campaign, rng: random.Random) -> dict:
     return result
 
 
+# --------------------------------------------------------------------------- placement portfolio
+def placement_portfolio(c: Campaign, max_k: int = 4, cost_per_extra: float = 0.01) -> dict:
+    """A small set of placements to try first, keeping the best.
+
+    Candidates: every placement run from the input measured on every design (the placer
+    sweep in the reference runs, place Default/Explore, place Default > phys_opt Explore).
+    Greedy: add the placement that most raises the mean, over designs, of the best-of-set
+    gain as a fraction of the design's best known gain. The set size is chosen on held-out
+    families (in-sample below 3 designs), with a small penalty per extra placement since
+    each costs a full re-place."""
+    fam = _families(c)
+    ids = list(fam)
+    cand: dict[str, dict[str, float]] = {}
+    units: dict[str, list[dict]] = {}
+
+    def plain(st: dict) -> bool:
+        return set(st) <= {"cmd", "directive"}
+    for r in c.results():
+        ch = r["chain"]
+        if r["design"] not in fam or r["start"] != "input" or r.get("extra_tcl") \
+                or not r["valid"] or r["purpose"] == "probe" or not ch or ch[0]["cmd"] != "place":
+            continue
+        ok = (len(ch) == 1 and plain(ch[0])) or \
+             (len(ch) == 2 and ch[1]["cmd"] == "phys_opt" and plain(ch[0]) and plain(ch[1]))
+        if not ok:
+            continue
+        k = chain_key(ch)
+        row = cand.setdefault(k, {})
+        row[r["design"]] = max(row.get(r["design"], -1e9), r["d_wns"])
+        units[k] = ch
+    full = sorted(k for k, v in cand.items() if all(d in v for d in ids))
+    if not ids or not full:
+        return {"status": "no placement measured on every design", "candidates": len(cand)}
+    oracle = {d: _oracle(c, d) for d in ids}
+
+    def frac_best(S, d):
+        return _frac(max(cand[k][d] for k in S), oracle[d])
+
+    def greedy(ds, K):
+        S: list[str] = []
+        for _ in range(K):
+            rest = [k for k in full if k not in S]
+            if not rest:
+                break
+            S.append(max(rest, key=lambda k: statistics.mean(frac_best(S + [k], d) for d in ds)))
+        return S
+    fams = sorted(set(fam.values()))
+    held_out = len(ids) >= 3 and len(fams) >= 2
+    table = {}
+    for K in range(1, min(max_k, len(full)) + 1):
+        if held_out:
+            sc = []
+            for F in fams:
+                tr = [d for d in ids if fam[d] != F]
+                te = [d for d in ids if fam[d] == F]
+                S = greedy(tr, K)
+                sc += [frac_best(S, d) for d in te]
+            table[K] = statistics.mean(sc)
+        else:
+            table[K] = statistics.mean(frac_best(greedy(ids, K), d) for d in ids)
+    k = max(table, key=lambda K: table[K] - cost_per_extra * (K - 1))
+    S = greedy(ids, k)
+    return {"chains": S, "units": [units[x] for x in S], "k": k,
+            "score_by_k": {K: round(v, 3) for K, v in table.items()},
+            "scored_on": "held-out families" if held_out else "training designs (< 3 designs)",
+            "n_designs": len(ids), "n_candidates": len(full),
+            "per_design": {x: {d: round(cand[x][d], 4) for d in ids} for x in S}}
+
+
 # --------------------------------------------------------------------------- pruning rules
 def pruning_rules(c: Campaign) -> dict:
     fam = _families(c)
@@ -515,6 +585,9 @@ def run(c: Campaign, log=print) -> dict:
     pol = policies(c, rng)
     log(f"[distill] policies: bins={pol.get('bins')} one-bin LOFO "
         f"{(pol.get('one_bin') or {}).get('lofo_frac_of_oracle')}")
+    pol["portfolio"] = placement_portfolio(c)
+    log(f"[distill] placement portfolio: {pol['portfolio'].get('chains') or pol['portfolio'].get('status')}"
+        f" (score by size {pol['portfolio'].get('score_by_k')})")
     pr = pruning_rules(c)
     sig = signals(c)
     rec = recipes(c)

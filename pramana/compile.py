@@ -63,18 +63,28 @@ def bins(kb: dict) -> dict:
                 "low": tb.get("units_low") or [tb["chain_low"]],
                 "high": tb.get("units_high") or [tb["chain_high"]],
                 "lofo": tb["lofo_frac_of_oracle"], "perm_p": tb["perm_p"]}
-    return {"type": "one", "all": pol["one_bin"].get("units") or [pol["one_bin"]["chain"]],
-            "lofo": pol["one_bin"]["lofo_frac_of_oracle"]}
+    units = pol["one_bin"].get("units") or [pol["one_bin"]["chain"]]
+    port = (pol.get("portfolio") or {}).get("units")
+    if port:
+        # placements first (keep the best of the portfolio), then the policy's post-placement
+        # steps; the policy's own placement unit is dropped, the portfolio replaces it
+        post = [u for u in units if u and not any(st["cmd"] in ("place", "opt") for st in u)]
+        return {"type": "one", "all": port + post, "portfolio": len(port),
+                "lofo": pol["one_bin"]["lofo_frac_of_oracle"]}
+    return {"type": "one", "all": units, "lofo": pol["one_bin"]["lofo_frac_of_oracle"]}
 
 
 def extra_actions(kb: dict, n: int = 6) -> list[dict]:
     """Single actions worth trying after the policy (gain per relative cost), each a step."""
     out = []
+    has_port = bool((kb["policies"].get("portfolio") or {}).get("units"))
     for a in kb["actions"]:
         p = a["profile"]
         if p["p_gain"] < 0.5 or p["median_d_wns"] <= 0 or a["factor"].count(":") != 1:
             continue
         cmd, rest = a["factor"].split(":", 1)
+        if has_port and cmd in ("place", "opt"):   # placements are the portfolio's job
+            continue
         if rest.startswith("directive="):
             st = {"cmd": cmd, "directive": rest.split("=", 1)[1]}
             if cmd == "route":
@@ -165,7 +175,13 @@ def context_md(kb: dict, b: dict) -> str:
         else:
             L.append(f"One strategy for all designs (held-out families reached {b['lofo']:.0%} of "
                      f"each design's best-known gain):")
-        L.append("    " + " | then | ".join(chain_key(u) for u in b["all"] or []))
+        if b.get("portfolio"):
+            L.append(f"First try these {b['portfolio']} placements, keeping the best "
+                     "(each re-places from the netlist): "
+                     + " | ".join(chain_key(u) for u in b["all"][:b["portfolio"]]))
+            L.append("Then: " + " | then | ".join(chain_key(u) for u in b["all"][b["portfolio"]:]))
+        else:
+            L.append("    " + " | then | ".join(chain_key(u) for u in b["all"] or []))
         L.append("Tcl: ::pramana::policy_all (in recipes.tcl).")
     elif b["type"] == "two":
         L.append(f"Two strategies split on feature {b['feature']} at {b['threshold']} "
