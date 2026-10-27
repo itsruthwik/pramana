@@ -16,8 +16,8 @@ def sub(w, lines):
     r.append("└" + "─"*(w-2) + "┘")
     return r
 
-L1 = sub(25, ["LLM analyst", "reads reports and", "results; prunes the", "option space (≤30%", "kept); states", "hypotheses; proposes", "sequences with", "predicted ΔWNS"])
-R1 = sub(33, ["Allocator", "selects runs per round:", " exploitation: bandit on", "  measured ΔWNS + LLM", "  predictions weighted by", "  their measured accuracy", " testing: hypothesis runs", " audit: runs on pruned options"])
+L1 = sub(25, ["LLM analyst", "(one session per", "design, resumed)", "reads reports,", "results, draft KB;", "prunes the option", "space; states", "hypotheses; proposes", "sequences with", "predicted ΔWNS"])
+R1 = sub(33, ["Allocator", "selects runs per round:", " exploitation: bandit on", "  measured ΔWNS + LLM", "  predictions weighted by", "  their measured accuracy", " testing: hypothesis runs", " audit: runs on pruned options", "", ""])
 L2 = sub(25, ["Result analysis", "validity, ΔWNS,", "hypothesis outcomes,", "prediction accuracy;", "stop after two rounds", "without gain"])
 R2 = sub(33, ["Vivado", "executes runs from the", "best checkpoint so far", "→ results database", "", ""])
 mid1 = ["", "", "", " pruned  ", " space,  ", " hypothe-", " ses,    ", " predic- ", " tions   ", "───────▶ "]
@@ -27,7 +27,8 @@ mid2 = mid2[:len(L2)]
 G = 11
 def pair(L, R, mid):
     return ["  " + a + (m.ljust(G)) + b for a, m, b in zip(L, mid + [""]*(len(L)-len(mid)), R)]
-inner = [""] + pair(L1, R1, ["", "", "", " pruned", " space,", " hypotheses", "─────────▶", " predicted", " ΔWNS", ""][:len(L1)])
+inner = ["", "  Draft KB ──▶ analyst: action effects on other designs, best sequences",
+         "  of the most similar designs, optional prior KB; recomputed every round", ""] + pair(L1, R1, ["", "", "", "", " pruned", " space,", " hypotheses", "─────────▶", " predicted", " ΔWNS", "", ""][:len(L1)])
 lc, rc = 2 + 12, 2 + 25 + G + 16
 def vline(ch_l, ch_r):
     s = [" "]*(W); s[lc] = ch_l; s[rc] = ch_r; return "".join(s).rstrip()
@@ -43,7 +44,7 @@ out += box("1. Design Characterization", [
  "  extract the 200 worst setup paths → feature vector per DCP",
  "  (logic/net delay share, logic levels, endpoint types, congestion)",
  "Reference runs: Explore directive on place, route and phys_opt",
- "  → reference ΔWNS and runtime per DCP (controls for later stages)"], "(once per DCP)")
+ "  → reference ΔWNS and runtime per DCP (controls for later stages)"], "(once per DCP, shared)")
 out += arrow("features, reports, reference results")
 b2 = ["   ┌" + "─"*W + "┐", "   │" + (" 2. LLM-Guided Exploration" + " "*20 + "(rounds, per design) ").ljust(W)[:W] + "│"]
 b2 += ["   │" + l.ljust(W) + "│" for l in inner]
@@ -68,7 +69,8 @@ out += box("5. Knowledge Distillation", [
  "Policies: ordered sequences per design bin, scored by fraction of",
  "  best achievable gain on held-out families",
  "Also: negative results, log signals predicting no gain, runtime",
- "  model vs design size, LLM-written mechanism notes (data-checked)"])
+ "  model vs design size, LLM-written mechanism notes (data-checked)",
+ "Draft KB: the same statistics, recomputed every round → stage 2"])
 c = 3 + 1 + W//2
 out += [" "*c + "▼"]
 kb = ["╔" + "═"*29 + "╗", "║" + "Knowledge Base".center(29) + "║", "║" + "every entry: evidence,".center(29) + "║", "║" + "grade, scope".center(29) + "║", "╚" + "═"*14 + "╤" + "═"*14 + "╝"]
