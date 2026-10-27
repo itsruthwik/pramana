@@ -17,6 +17,9 @@ class Campaign:
         self.runner = Runner(cfg)
         # reference runs live in the framework store, shared by all campaigns
         self.store_runner = Runner(cfg, store.runs_root(cfg))
+        # a campaign run identical to a reference run (same design, start, chain) is not
+        # re-run; results() returns the reference record for it
+        self.runner.also_done = self.store_runner.done_ids
 
     # ---------------------------------------------------------------- designs
     def designs(self) -> list[dict]:
@@ -57,8 +60,9 @@ class Campaign:
         own = self.runner.load()
         shared = [r for r in self.store_runner.load() if md5.get(r["design"]) == r.get("dcp_md5")]
         if shared:
-            # a run id can appear in both (campaigns made before the store); keep the record
-            # with the most final status, own record on ties
+            # a run id can appear in both (campaigns made before the store, or a search run
+            # identical to a reference run); keep the record with the most final status;
+            # on ties keep the reference record (its tag identifies it as a control)
             rank = {"ok": 3, "error": 2}
             ids = {r["run_id"]: i for i, r in enumerate(own)}
             for r in shared:
@@ -66,7 +70,9 @@ class Campaign:
                 if i is None:
                     ids[r["run_id"]] = len(own)
                     own.append(r)
-                elif rank.get(r["status"], 0) > rank.get(own[i]["status"], 0):
+                elif rank.get(r["status"], 0) > rank.get(own[i]["status"], 0) or (
+                        rank.get(r["status"], 0) == rank.get(own[i]["status"], 0)
+                        and r["purpose"] in ("baseline", "noise")):
                     own[i] = r
         return [r for r in own if (r["design"] == did if did else r["design"] in md5)
                 and (include_noise or r["purpose"] != "noise")]

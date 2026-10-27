@@ -16,7 +16,7 @@ def sub(w, lines):
     r.append("└" + "─"*(w-2) + "┘")
     return r
 
-L1 = sub(25, ["LLM analyst", "(one session per", "design, resumed)", "reads reports,", "results, draft KB;", "prunes the option", "space; states", "hypotheses; proposes", "sequences with", "predicted ΔWNS"])
+L1 = sub(25, ["LLM analysts + critic", "(sessions per design,", "resumed) read reports,", "results, draft KB;", "prune the option", "space; state hypo-", "theses; propose runs", "with predicted ΔWNS;", "critic drops claims", "the evidence refutes"])
 R1 = sub(33, ["Allocator", "selects runs per round:", " exploitation: bandit on", "  measured ΔWNS + LLM", "  predictions weighted by", "  their measured accuracy", " testing: hypothesis runs", " audit: runs on pruned options", "", ""])
 L2 = sub(25, ["Result analysis", "validity, ΔWNS,", "hypothesis outcomes,", "prediction accuracy;", "stop after two rounds", "without gain"])
 R2 = sub(33, ["Vivado", "executes runs from the", "best checkpoint so far", "→ results database", "", ""])
@@ -43,8 +43,11 @@ out += box("1. Design Characterization", [
  "  congestion, utilization, control sets, fanout, clocks, QoR) and",
  "  extract the 200 worst setup paths → feature vector per DCP",
  "  (logic/net delay share, logic levels, endpoint types, congestion)",
- "Reference runs: Explore directive on place, route and phys_opt",
- "  → reference ΔWNS and runtime per DCP (controls for later stages)"], "(once per DCP, shared)")
+ "Reference runs: Explore directive on place, route and phys_opt;",
+ "  every placer directive; a second placement after phys_opt",
+ "  → reference ΔWNS and runtime per DCP (controls for later stages)",
+ "Noise: reference runs repeated under a 2/4 ps clock perturbation",
+ "  → per-DCP noise floor (gains below it are not counted)"], "(once per DCP, shared)")
 out += arrow("features, reports, reference results")
 b2 = ["   ┌" + "─"*W + "┐", "   │" + (" 2. LLM-Guided Exploration" + " "*20 + "(rounds, per design) ").ljust(W)[:W] + "│"]
 b2 += ["   │" + l.ljust(W) + "│" for l in inner]
@@ -60,14 +63,19 @@ out += arrow("best sequences, candidate recipes")
 out += box("4. Cross-Design Validation", [
  "Replay each design's best sequence from its input DCP; apply every",
  "sequence and every improving recipe to all other training designs",
- "  → design × sequence ΔWNS matrix"])
+ "  → design × sequence ΔWNS matrix",
+ "Recipes that edit the netlist: random-vector simulation against",
+ "  their start state; only matching recipes can be compiled"])
 out += arrow("results database (all runs of stages 1–4)")
 out += box("5. Knowledge Distillation", [
  "Action profiles: median ΔWNS, P(gain), P(regression), runtime",
  "Conditions: feature thresholds, kept only if they hold on held-out",
  "  design families and beat a label-permutation test",
- "Policies: ordered sequences per design bin, scored by fraction of",
- "  best achievable gain on held-out families",
+ "Policies: ordered sequences per design bin and per time budget,",
+ "  scored by fraction of best gain on held-out families; a set of",
+ "  placements to try first, chosen the same way",
+ "Interactions: effect of a step after earlier steps vs alone",
+ "  (complement, substitute, interfering, repeat)",
  "Also: negative results, log signals predicting no gain, runtime",
  "  model vs design size, LLM-written mechanism notes (data-checked)",
  "Draft KB: the same statistics, recomputed every round → stage 2"])
@@ -86,8 +94,8 @@ def bar(l, m, r, mid):
     return "".join(t)
 out += [bar("┌", "", "┐", "┴")]
 t=[" "]*(rc2+1); t[lc2]="▼"; t[rc2]="▼"; out.append("".join(t))
-LB = sub(26, ["LLM-based flow", "context document,", "Tcl recipe procedures", "", ""])
-RB = sub(28, ["Deterministic flow", "feature extraction,", "classifier (abstains", "outside training range),", "per-bin command sequence"])
+LB = sub(26, ["LLM-based flow", "context document,", "Tcl recipe procedures;", "adapters for other", "agents (LATCH, PACT)"])
+RB = sub(28, ["Deterministic flow", "classifier (abstains", "outside training range),", "command sequence per bin", "and time budget"])
 for a, b in zip(LB, RB):
     out.append(" "*lb + a + " "*(rb - lb - 26) + b)
 out += [bar("└", "", "┘", "┬")]
@@ -96,7 +104,8 @@ out += box("Deployment on unseen DCPs (held-out families)", [
  "Profile → features, then",
  "  LLM-based flow: agent plans with KB context and recipes",
  "  Deterministic flow: bin → command sequence",
- "Each Vivado step retained only if WNS improves"], "(within time budget)")
+ "Each Vivado step retained only if WNS improves; a step starts",
+ "  only if its estimated runtime fits the remaining budget"], "(within time budget)")
 out += ["", "   LLM: search-space pruning, hypothesis generation, recipe composition",
         "   Vivado measurements: sole source of quantitative KB content"]
 print("\n".join(out))

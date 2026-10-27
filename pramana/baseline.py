@@ -69,8 +69,21 @@ def noise_chains() -> dict[str, tuple[str, list[dict]]]:
     return out
 
 
+# Second placement after phys_opt: on eval1, re-placing an already phys_opt'd netlist gained
+# where a single placement didn't (digit-recognition: +0.19 with Default, +0.33 with
+# AltWLDrivenPlacement, vs -0.05 for AltWL alone). Measured on every design so the placement
+# portfolio can choose it.
+REPLACE2 = ["Default", "AltWLDrivenPlacement"]
+
+
+def replace2_chains() -> dict[str, list[dict]]:
+    return {f"replace2_{d}": [{"cmd": "place", "directive": "Default"},
+                              {"cmd": "phys_opt", "directive": "Explore"},
+                              {"cmd": "place", "directive": d}] for d in REPLACE2}
+
+
 def reference_chains(c: Campaign) -> dict[str, list[dict]]:
-    return {**BASELINES, **place_sweep(c.spec())}
+    return {**BASELINES, **place_sweep(c.spec()), **replace2_chains()}
 
 
 def jobs(c: Campaign) -> list[dict]:

@@ -114,7 +114,10 @@ class Runner:
     def done_ids(self) -> set[str]:
         """Runs that finished (ok or a tool error). Crashes/timeouts are infrastructure
         failures (e.g. killed under memory pressure) and are retried."""
-        return {r["run_id"] for r in self.load() if r["status"] in ("ok", "error")}
+        own = {r["run_id"] for r in self.load() if r["status"] in ("ok", "error")}
+        # runs already in another database (the framework store) are not repeated
+        also = getattr(self, "also_done", None)
+        return own | (also() if also else set())
 
     def _append(self, rec: dict) -> None:
         import fcntl

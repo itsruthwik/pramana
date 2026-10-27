@@ -488,7 +488,8 @@ def placement_portfolio(c: Campaign, max_k: int = 4, cost_per_extra: float = 0.0
     """A small set of placements to try first, keeping the best.
 
     Candidates: every placement run from the input measured on every design (the placer
-    sweep in the reference runs, place Default/Explore, place Default > phys_opt Explore).
+    sweep in the reference runs, place Default/Explore, place Default > phys_opt Explore, and
+    a second placement after that).
     Greedy: add the placement that most raises the mean, over designs, of the best-of-set
     gain as a fraction of the design's best known gain. The set size is chosen on held-out
     families (in-sample below 3 designs), with a small penalty per extra placement since
@@ -505,8 +506,11 @@ def placement_portfolio(c: Campaign, max_k: int = 4, cost_per_extra: float = 0.0
         if r["design"] not in fam or r["start"] != "input" or r.get("extra_tcl") \
                 or not r["valid"] or r["purpose"] == "probe" or not ch or ch[0]["cmd"] != "place":
             continue
-        ok = (len(ch) == 1 and plain(ch[0])) or \
-             (len(ch) == 2 and ch[1]["cmd"] == "phys_opt" and plain(ch[0]) and plain(ch[1]))
+        ok = all(plain(st) for st in ch) and (
+            len(ch) == 1 or
+            (len(ch) == 2 and ch[1]["cmd"] == "phys_opt") or
+            # second placement after phys_opt (baseline.REPLACE2)
+            (len(ch) == 3 and [st["cmd"] for st in ch] == ["place", "phys_opt", "place"]))
         if not ok:
             continue
         k = chain_key(ch)
