@@ -117,9 +117,13 @@ class Runner:
         return {r["run_id"] for r in self.load() if r["status"] in ("ok", "error")}
 
     def _append(self, rec: dict) -> None:
-        with _db_lock:
+        import fcntl
+        with _db_lock:   # threads in this process; flock for other processes (trial runner)
             with self.db.open("a") as f:
+                fcntl.flock(f, fcntl.LOCK_EX)
                 f.write(json.dumps(rec) + "\n")
+                f.flush()
+                fcntl.flock(f, fcntl.LOCK_UN)
 
     # ------------------------------------------------------------------ one run
     def run(self, job: dict) -> dict:

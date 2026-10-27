@@ -42,8 +42,8 @@ timeout of 600000 ms for `wait`. You may submit up to 3 trials before waiting.
 
 Useful tools (all Vivado Tcl): get_timing_paths -max_paths N -nworst 1, get_cells/get_nets
 -of_objects, get_property, set_property (e.g. on cells/nets), phys_opt_design with targeted
-options (-force_replication_on_nets, -critical_cell_opt, -placement_opt, -critical_pin_opt,
--fanout_opt, -retime, -routing_opt), route_design -nets / -unroute -nets,
+options (on a routed design only these are accepted: {postroute_opts}; these are rejected
+after routing and abort the recipe: {preroute_only}), route_design -nets / -unroute -nets,
 place_design -unplace + place_design on cell subsets (unplace_cell / place_cell), temporary
 clock over-constraint (set_clock_uncertainty -setup X [get_clocks ...] before an optimisation,
 then set it back to 0 before the end), report_* for diagnosis inside the recipe (puts output
@@ -55,6 +55,15 @@ When done (budget used or no more ideas), write `candidates.json` in your workin
   [{{"trial": "t03", "name": "short_name", "general": true, "rationale": "why it works"}}, ...]
 listing your best trials (best first). Then reply with a one-paragraph summary.
 """
+
+
+def _physopt_lists(spec: dict) -> dict:
+    opts = spec["commands"]["phys_opt"]["options"]
+    sw = {k: o for k, o in opts.items() if o["type"] == "switch"}
+    post = sorted(k for k, o in sw.items() if o.get("postroute", True))
+    pre = sorted(k for k, o in sw.items() if o.get("postroute") is False)
+    return {"postroute_opts": " ".join(post + ["-force_replication_on_nets <nets>"]),
+            "preroute_only": " ".join(pre) or "(none)"}
 
 
 def run(c: Campaign, log=print, max_trials: int | None = None, designs: list[str] | None = None) -> None:
@@ -77,7 +86,7 @@ def run(c: Campaign, log=print, max_trials: int | None = None, designs: list[str
             ver=c.cfg.vivado_version, brief=evidence.design_brief(c, did),
             results=evidence.results_table(c, did, limit=60), start=best["id"],
             start_wns=best["wns"], lineage=" > ".join(c.lineage(did, best["id"])) or "(input)",
-            max_trials=max_trials)
+            max_trials=max_trials, **_physopt_lists(c.spec()))
         log(f"[discover] {did}: agent starting from {best['id']} (WNS {best['wns']})")
         rec = llm.agent(c.cfg, "discover", did, prompt, cwd=td)
         log(f"[discover] {did}: agent done (turns={rec.get('num_turns')}, error={rec.get('is_error')})")

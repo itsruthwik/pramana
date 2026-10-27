@@ -93,71 +93,106 @@ def write_table(root: Path, steps: list[dict]) -> None:
     (root / "sequential.md").write_text("\n".join(L) + "\n")
 
 
+def _parallel(*fns) -> None:
+    ts = [threading.Thread(target=f) for f in fns]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+
+
 def run(exp: str, heldout: str, order: list[str], heldout_every: int = 3,
         budget: float = 3000, prior_kb: str = "", rounds: int = 3, runs_per_round: int = 8,
-        discover_trials: int = 6) -> None:
+        discover_trials: int = 6, workers: int = 6) -> None:
+    """Critical path per step: prepare -> prune -> search -> (discover || confirm) -> distill
+    -> compile. Evaluations only read frozen KB snapshots, so they run in the background:
+    pre (KB_{n-1} on design n) alongside training, post and held-out after it, overlapping the
+    next step. Recipes discovered in step n are transferred by step n+1's confirm."""
     base = Config.load(heldout)
     tcfg = _ensure(exp, base, prior_kb=prior_kb)
     if not (tcfg.root / "sequential.json").exists():   # settings fixed at the first step
         tcfg.rounds, tcfg.runs_per_design_per_round = rounds, runs_per_round
-        tcfg.discover_trials, tcfg.workers = discover_trials, 4
-        tcfg.save()
+        tcfg.discover_trials = discover_trials
+    tcfg.workers = workers
+    tcfg.save()
     ecfg = _ensure(f"{exp}_ev", base, workers=2)
+    ecfg.workers = max(2, workers // 2)
+    ecfg.save()
     log = log_to(tcfg)
     out_path = tcfg.root / "sequential.json"
-    steps = json.loads(out_path.read_text()) if out_path.exists() else []
-    done = {s["n"] for s in steps if s.get("complete")}
+    lock = threading.Lock()
+    steps = {s["n"]: s for s in (json.loads(out_path.read_text()) if out_path.exists() else [])}
+
+    def update(n: int, **kw) -> None:
+        with lock:
+            steps[n].update(kw)
+            ordered = [steps[k] for k in sorted(steps)]
+            out_path.write_text(json.dumps(ordered, indent=1))
+            write_table(tcfg.root, ordered)
+
     ho = Campaign(Config.load(heldout))
+    background: list[threading.Thread] = []
+
+    def bg(fn) -> None:
+        t = threading.Thread(target=fn)
+        t.start()
+        background.append(t)
+
+    def evals_after(n: int, did: str, bundle: Path) -> None:
+        train, ev = Campaign(Config.load(exp)), Campaign(Config.load(f"{exp}_ev"))
+        post = _eval_one(train, ev, bundle, did, f"{exp}_v{n}", budget, log)
+        update(n, post_d_wns=post and post["d_wns"], post_valid=post and post["valid"],
+               post_secs=post and post["secs"])
+        if heldout_every and ((n + 1) % heldout_every == 0 or n == len(order) - 1):
+            rows = evaluate.run(train, ho, budget, log=log, bundle=bundle, label=f"{exp}_v{n}")
+            vals = [r["d_wns"] for r in rows if r["valid"] and r["d_wns"] is not None]
+            update(n, heldout={r["design"]: r["d_wns"] for r in rows},
+                   heldout_mean=round(sum(vals) / len(vals), 4) if vals else None)
+        log(f"##### step {n} evals: pre={steps[n].get('pre_d_wns')} post={steps[n].get('post_d_wns')} "
+            f"oracle={steps[n].get('oracle')} heldout_mean={steps[n].get('heldout_mean')} #####")
+
+    def eval_pre(n: int, did: str, bundle: Path) -> None:
+        train, ev = Campaign(Config.load(exp)), Campaign(Config.load(f"{exp}_ev"))
+        r = _eval_one(train, ev, bundle, did, f"{exp}_v{n - 1}", budget, log)
+        update(n, pre_d_wns=r and r["d_wns"], pre_valid=r and r["valid"], pre_secs=r and r["secs"])
+
     for n, did in enumerate(order):
-        if n in done:
+        if steps.get(n, {}).get("complete"):
+            if "post_d_wns" not in steps[n]:      # resumed: evals of a finished step
+                bg(lambda n=n, did=did: evals_after(n, did, tcfg.root / f"out_v{n}" / "mithya"))
             continue
         t0 = time.time()
         log(f"##### step {n}: {did} #####")
-        rec = {"n": n, "design": did, "started": time.strftime("%Y-%m-%d %H:%M:%S")}
+        with lock:
+            steps[n] = {"n": n, "design": did, "started": time.strftime("%Y-%m-%d %H:%M:%S")}
         add_design(tcfg, did)
         add_design(ecfg, did)
         for s in PREPARE:
             stage(s, tcfg, log)
         stage("profile", ecfg, log)            # store hit: same DCP
-        train, ev = Campaign(Config.load(exp)), Campaign(Config.load(f"{exp}_ev"))
-        rec["baseline"] = _baseline_best(train, did)
-        # pre: KB_{n-1} on the new design, in parallel with training
-        pre_box: dict = {}
-        pre_thread = None
+        update(n, baseline=_baseline_best(Campaign(Config.load(exp)), did))
         prev_bundle = tcfg.root / f"out_v{n - 1}" / "mithya"
         if n > 0 and prev_bundle.exists():
-            pre_thread = threading.Thread(target=lambda: pre_box.update(
-                r=_eval_one(train, ev, prev_bundle, did, f"{exp}_v{n - 1}", budget, log)))
-            pre_thread.start()
-        for s in TRAIN:
+            bg(lambda n=n, did=did, b=prev_bundle: eval_pre(n, did, b))
+        for s in ("prune", "search"):
+            stage(s, Config.load(exp), log)
+        _parallel(lambda: stage("discover", Config.load(exp), log),
+                  lambda: stage("confirm", Config.load(exp), log))
+        for s in ("distill", "compile"):
             stage(s, Config.load(exp), log)
         bundle = snapshot(Config.load(exp), n)
         train = Campaign(Config.load(exp))
         kb = json.loads((tcfg.root / "kb" / f"kb_v{n}.json").read_text())
         pol = (kb.get("policies") or {}).get("one_bin") or {}
-        rec.update(policy=pol.get("policy", ""), lofo=pol.get("lofo_frac_of_oracle"),
-                   bins=(kb.get("policies") or {}).get("bins"),
-                   oracle=round(train.best_state(did)["wns"] - train.input_state(did)["wns"], 4))
-        if pre_thread:
-            pre_thread.join()
-            r = pre_box.get("r")
-            rec.update(pre_d_wns=r and r["d_wns"], pre_valid=r and r["valid"], pre_secs=r and r["secs"])
-        post = _eval_one(train, ev, bundle, did, f"{exp}_v{n}", budget, log)
-        rec.update(post_d_wns=post and post["d_wns"], post_valid=post and post["valid"],
-                   post_secs=post and post["secs"])
-        if heldout_every and ((n + 1) % heldout_every == 0 or n == len(order) - 1):
-            rows = evaluate.run(train, ho, budget, log=log, bundle=bundle, label=f"{exp}_v{n}")
-            rec["heldout"] = {r["design"]: r["d_wns"] for r in rows}
-            vals = [r["d_wns"] for r in rows if r["valid"] and r["d_wns"] is not None]
-            rec["heldout_mean"] = round(sum(vals) / len(vals), 4) if vals else None
-        rec.update(complete=True, wall_h=round((time.time() - t0) / 3600, 2))
-        steps = [s for s in steps if s["n"] != n] + [rec]
-        steps.sort(key=lambda s: s["n"])
-        out_path.write_text(json.dumps(steps, indent=1))
-        write_table(tcfg.root, steps)
-        log(f"##### step {n} done: pre={rec.get('pre_d_wns')} post={rec.get('post_d_wns')} "
-            f"oracle={rec.get('oracle')} baseline={rec.get('baseline')} "
-            f"({rec['wall_h']} h) #####")
+        update(n, policy=pol.get("policy", ""), lofo=pol.get("lofo_frac_of_oracle"),
+               bins=(kb.get("policies") or {}).get("bins"),
+               oracle=round(train.best_state(did)["wns"] - train.input_state(did)["wns"], 4),
+               complete=True, train_h=round((time.time() - t0) / 3600, 2))
+        log(f"##### step {n} trained in {steps[n]['train_h']} h; evals in background #####")
+        bg(lambda n=n, did=did, b=bundle: evals_after(n, did, b))
+    for t in background:
+        t.join()
+    log("##### sequential run finished #####")
 
 
 if __name__ == "__main__":
@@ -171,6 +206,7 @@ if __name__ == "__main__":
     ap.add_argument("--rounds", type=int, default=3)
     ap.add_argument("--runs-per-round", type=int, default=8)
     ap.add_argument("--discover-trials", type=int, default=6)
+    ap.add_argument("--workers", type=int, default=6)
     a = ap.parse_args()
     run(a.exp, a.heldout, a.order.split(","), a.heldout_every, a.budget, a.prior_kb,
-        a.rounds, a.runs_per_round, a.discover_trials)
+        a.rounds, a.runs_per_round, a.discover_trials, a.workers)
