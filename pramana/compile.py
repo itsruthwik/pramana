@@ -77,13 +77,16 @@ def bins(kb: dict) -> dict:
 def extra_actions(kb: dict, n: int = 6) -> list[dict]:
     """Single actions worth trying after the policy (gain per relative cost), each a step."""
     out = []
-    has_port = bool((kb["policies"].get("portfolio") or {}).get("units"))
+    # placements already in the portfolio are not repeated; other placer directives stay as
+    # extras (cheap insurance: on eval1 a late wirelength-driven re-place gave the largest gains)
+    port = (kb["policies"].get("portfolio") or {}).get("units") or []
+    in_port = {(st["cmd"], st.get("directive")) for u in port for st in u}
     for a in kb["actions"]:
         p = a["profile"]
         if p["p_gain"] < 0.5 or p["median_d_wns"] <= 0 or a["factor"].count(":") != 1:
             continue
         cmd, rest = a["factor"].split(":", 1)
-        if has_port and cmd in ("place", "opt"):   # placements are the portfolio's job
+        if (cmd, rest.split("=", 1)[-1]) in in_port:
             continue
         if rest.startswith("directive="):
             st = {"cmd": cmd, "directive": rest.split("=", 1)[1]}
