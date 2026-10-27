@@ -28,6 +28,10 @@ class Config:
     # LLM (Claude Code headless, user's subscription)
     llm_model: str = "claude-sonnet-5-5"
     llm_effort: str = "low"
+    # analysts per design per prune (model ids; empty = [llm_model]). Several give independent
+    # opinions that are merged by vote; the critic checks the merged answer against the evidence
+    analysts: list[str] = field(default_factory=list)
+    critic: bool = True
     # search budget
     rounds: int = 4
     runs_per_design_per_round: int = 8

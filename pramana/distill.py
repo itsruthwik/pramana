@@ -340,6 +340,149 @@ def policies(c: Campaign, rng: random.Random) -> dict:
     return result
 
 
+# --------------------------------------------------------------------------- interactions
+def _start_kind(chain: list[dict]) -> str:
+    """What produced a start state: a fresh placement, or post-route steps only."""
+    return "placed" if any(st["cmd"] in ("place", "opt") for st in chain) else "postroute"
+
+
+def interactions(c: Campaign, min_designs: int = 2) -> list[dict]:
+    """How a step behaves after other steps, vs from the input DCP.
+
+    For every run B started from a state A (a previous run), on design d:
+      after   = WNS(A then B) - WNS(A)           what B adds on top of A
+      alone   = WNS(B from input) - WNS(input)   (when B was also run from the input)
+      combo   = WNS(A then B) - max(WNS(A), WNS(B alone))
+    Grouped by (kind of A, B), kind = 'placed' (A re-placed) or 'postroute'. Types:
+      complement   combo > noise on most designs (doing both beats either alone)
+      substitute   B helps alone but adds nothing after A
+      interfering  B usually makes A's state worse
+      repeat       B repeats a factor A already applied (diminishing returns)
+      neutral      none of the above
+    """
+    fam = _families(c)
+    rs = c.results()
+    by = {r["run_id"]: r for r in rs}
+    inp = {d: c.input_state(d)["wns"] for d in fam}
+    noise = {d: c.noise_floor(d) for d in fam}
+    alone: dict[str, dict[str, float]] = defaultdict(dict)
+    for r in rs:
+        if r["start"] == "input" and r["valid"] and not r.get("extra_tcl") and r["purpose"] != "probe":
+            a = alone[r["design"]]
+            a[r["chain_key"]] = max(a.get(r["chain_key"], -1e9), r["result"]["wns"])
+    groups: dict[tuple, list[dict]] = defaultdict(list)
+    for r in rs:
+        A = by.get(r["start"])
+        if r["start"] == "input" or A is None or r.get("extra_tcl") or r["design"] not in fam:
+            continue
+        d = r["design"]
+        after = (r["result"]["wns"] if r["valid"] else A["result"]["wns"] + INVALID) - A["result"]["wns"]
+        wb = alone[d].get(r["chain_key"])
+        fa = {f for st in A["chain"] for f in step_factors(st)}
+        fb = {f for st in r["chain"] for f in step_factors(st)}
+        groups[(_start_kind(A["chain"]), r["chain_key"])].append({
+            "design": d, "run": r["run_id"], "after": after, "repeat": bool(fb) and fb <= fa,
+            "alone": None if wb is None else wb - inp[d],
+            "combo": None if wb is None or not r["valid"]
+            else r["result"]["wns"] - max(A["result"]["wns"], wb),
+            "noise": noise[d]})
+    out = []
+    for (kind, b), xs in groups.items():
+        # one value per design (its best), so a design run many times can't dominate
+        per: dict[str, dict] = {}
+        for x in xs:
+            if x["design"] not in per or x["after"] > per[x["design"]]["after"]:
+                per[x["design"]] = x
+        ds = sorted(per)
+        if len(ds) < min_designs:
+            continue
+        v = [per[d] for d in ds]
+        after = [x["after"] for x in v]
+        alone_v = [x["alone"] for x in v if x["alone"] is not None]
+        combo = [x["combo"] for x in v if x["combo"] is not None]
+        p_after_gain = sum(1 for x in v if x["after"] > x["noise"]) / len(v)
+        p_after_hurt = sum(1 for x in v if x["after"] < -x["noise"]) / len(v)
+        p_combo = (sum(1 for x in v if x["combo"] is not None and x["combo"] > x["noise"])
+                   / len(combo)) if combo else None
+        if sum(x["repeat"] for x in v) > len(v) / 2:
+            typ = "repeat"
+        elif p_after_hurt >= 0.5 and statistics.median(after) < 0:
+            typ = "interfering"
+        elif p_combo is not None and p_combo >= 0.5 and statistics.median(combo) > 0:
+            typ = "complement"
+        elif alone_v and statistics.median(alone_v) > 0 and p_after_gain < 0.5:
+            typ = "substitute"
+        else:
+            typ = "neutral"
+        out.append({"after_kind": kind, "step": b, "type": typ, "n_designs": len(ds),
+                    "n_families": len({fam[d] for d in ds}),
+                    "median_after": round(statistics.median(after), 4),
+                    "p_after_gain": round(p_after_gain, 3), "p_after_regress": round(p_after_hurt, 3),
+                    "median_alone": round(statistics.median(alone_v), 4) if alone_v else None,
+                    "median_combo": round(statistics.median(combo), 4) if combo else None,
+                    "p_combo_gain": None if p_combo is None else round(p_combo, 3),
+                    "grade": _grade(len(ds), len({fam[d] for d in ds})),
+                    "evidence": sorted(x["run"] for x in v)})
+    out.sort(key=lambda x: (-x["n_designs"], -x["median_after"]))
+    return out
+
+
+# --------------------------------------------------------------------------- budgets
+REL_BUDGETS = [3, 6, 12, 25, 50]   # budget / the design's route Explore time
+
+
+def _timeline(r: dict) -> list[tuple[float, float]]:
+    """(cumulative step seconds, WNS) at every routed state a run passed through."""
+    out, t, routed = [], 0.0, True
+    for s in r.get("steps") or []:
+        t += s.get("secs") or 0.0
+        if not s.get("ok"):
+            break
+        name = s["name"]
+        if "place" in name or "_opt" in name and "phys_opt" not in name:
+            routed = False
+        if "route" in name:
+            routed = True
+        if routed and s.get("wns_after") is not None:
+            out.append((t, s["wns_after"]))
+    return out
+
+
+def policies_by_budget(c: Campaign) -> dict:
+    """One policy per time budget, chosen like the one-bin policy (LOFO over families) but
+    scoring each candidate by what it reaches within the budget. Run with keep-if-better steps,
+    a policy is worth the best routed state it reached by then (0 if none). Budgets are
+    relative to each design's route Explore time, so they transfer across design sizes."""
+    fam = _families(c)
+    M, pols = policy_matrix(c)
+    designs = [d for d in fam if M and all(d in row for row in M.values())]
+    if len(designs) < 3:
+        return {"status": "fewer than 3 designs with every policy replayed", "budgets": []}
+    inp = {d: c.input_state(d)["wns"] for d in designs}
+    ref = {d: _ref_secs(c, d) for d in designs}
+    oracle = {d: _oracle(c, d) for d in designs}
+    tl: dict[str, dict[str, list]] = defaultdict(dict)
+    for r in c.results():
+        if r["start"] == "input" and r["chain_key"] in M and r["design"] in inp \
+                and not r.get("extra_tcl") and r["valid"]:
+            tl[r["chain_key"]][r["design"]] = _timeline(r)
+    out = []
+    for rb in REL_BUDGETS:
+        V = {k: {d: max([w - inp[d] for t, w in tl[k].get(d, []) if t <= rb * ref[d]] + [0.0])
+                 for d in designs} for k in M}
+        one = _pick(V, designs, oracle)
+        scores = []
+        for F in sorted({fam[d] for d in designs}):
+            tr = [d for d in designs if fam[d] != F]
+            k = _pick(V, tr, oracle)
+            scores += [_frac(V[k][d], oracle[d]) for d in designs if fam[d] == F]
+        out.append({"rel_budget": rb, "policy": one, "units": pols.get(one, {}).get("units"),
+                    "train_frac_of_oracle": round(statistics.mean(_frac(V[one][d], oracle[d])
+                                                                  for d in designs), 3),
+                    "lofo_frac_of_oracle": round(statistics.mean(scores), 3)})
+    return {"unit": "budget / route Explore secs of the design", "budgets": out}
+
+
 # --------------------------------------------------------------------------- placement portfolio
 def placement_portfolio(c: Campaign, max_k: int = 4, cost_per_extra: float = 0.01) -> dict:
     """A small set of placements to try first, keeping the best.
@@ -523,6 +666,9 @@ def cost_model(c: Campaign) -> dict:
                    "route" if "route" in n else "opt" if "opt" in n else None)
             if cmd and s["secs"] > 0.5:
                 pts[cmd].append((math.log(prims), math.log(s["secs"])))
+        # 'ref': the route Explore reference run, the unit that per-budget policies use
+        if r["purpose"] == "baseline" and r.get("tag") == "route_explore" and r.get("opt_secs"):
+            pts["ref"].append((math.log(prims), math.log(r["opt_secs"])))
     out = {}
     for cmd, xy in pts.items():
         if len(xy) < 3:
@@ -588,6 +734,14 @@ def run(c: Campaign, log=print) -> dict:
     pol["portfolio"] = placement_portfolio(c)
     log(f"[distill] placement portfolio: {pol['portfolio'].get('chains') or pol['portfolio'].get('status')}"
         f" (score by size {pol['portfolio'].get('score_by_k')})")
+    pol["by_budget"] = policies_by_budget(c)
+    log("[distill] policy by budget: " + ", ".join(
+        f"x{b['rel_budget']}={b['policy']} ({b['lofo_frac_of_oracle']})"
+        for b in pol["by_budget"]["budgets"]) or pol["by_budget"].get("status"))
+    inter = interactions(c)
+    log(f"[distill] interactions: {len(inter)} (" + ", ".join(
+        f"{t} {sum(1 for x in inter if x['type'] == t)}"
+        for t in ("complement", "substitute", "interfering", "repeat", "neutral")) + ")")
     pr = pruning_rules(c)
     sig = signals(c)
     rec = recipes(c)
@@ -616,7 +770,7 @@ def run(c: Campaign, log=print) -> dict:
                  "n_runs": len(c.results()), "unit": "dWNS ns vs start state; MHz display only"},
         "feature_definitions": FEATURE_DOC, "feature_ranges": ranges,
         "design_features": feats,
-        "actions": acts, "conditions": conds, "policies": pol,
+        "actions": acts, "conditions": conds, "policies": pol, "interactions": inter,
         "pruning": pr, "negative": negative, "signals": sig, "recipes": rec,
         "hypotheses": hyps, "cost_model": cost_model(c),
         "llm_spend": llm.spend(c.cfg),

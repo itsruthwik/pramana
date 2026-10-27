@@ -28,7 +28,7 @@ def _log_dir(cfg: Config, stage: str) -> Path:
 
 def ask(cfg: Config, stage: str, name: str, prompt: str, schema: dict,
         timeout_s: float = 1800, retries: int = 1, system: str | None = None,
-        key: str | None = None) -> dict | None:
+        key: str | None = None, model: str | None = None) -> dict | None:
     """One structured answer from a regular session (no shell). With `key`, later calls
     with the same key resume the same session (e.g. one analyst per design)."""
     d = _log_dir(cfg, stage)
@@ -60,7 +60,7 @@ def ask(cfg: Config, stage: str, name: str, prompt: str, schema: dict,
             ans.unlink()
         rec = session.run(cfg, stage, name, task, cwd, done, key=key, system=system,
                           tools=session.READ_TOOLS, timeout_s=timeout_s,
-                          task_file=f"{name}_task.md")
+                          task_file=f"{name}_task.md", model=model)
         rec["attempt"] = attempt
         if rec["status"] == "ok":
             so = json.loads(ans.read_text())

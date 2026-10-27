@@ -160,6 +160,8 @@ class Runner:
             "run_dir": str(rdir), "time": time.strftime("%Y-%m-%d %H:%M:%S"),
             "threads": job.get("threads", self.cfg.threads),
         }
+        if job.get("noise_of"):
+            rec["noise_of"] = job["noise_of"]
         self._append(rec)
         return rec
 

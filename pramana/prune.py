@@ -180,30 +180,155 @@ def validate(spec: dict, out: dict, prev_cuts: set[str] | None = None) -> dict:
             "kept_factors": kept, "total_factors": n_all}
 
 
+CRITIC_SCHEMA = {
+    "type": "object",
+    "properties": {"verdicts": {"type": "array", "items": {
+        "type": "object",
+        "properties": {"id": {"type": "string"}, "supported": {"type": "boolean"},
+                       "why": {"type": "string"}},
+        "required": ["id", "supported", "why"]}}},
+    "required": ["verdicts"],
+}
+
+CRITIC_SYSTEM = ("You are a strict reviewer of timing-closure analyses for AMD Vivado. You check "
+                 "each claim against the evidence given and nothing else.")
+
+CRITIC_INSTRUCTIONS = """
+## Your task: check this analysis against the evidence above
+
+Below is an analysis of this design (cuts, proposals, hypotheses), merged from {n} independent
+analyst(s). For EVERY item, decide whether its reason is supported by the evidence above
+(reports, Explore baseline runs and pass tables, the knowledge base from earlier designs).
+- supported = true: the reason cites or follows from evidence shown above, or is a standard,
+  uncontroversial property of Vivado; no number in it contradicts the evidence.
+- supported = false: the reason misreads, contradicts or invents evidence (e.g. claims a pass
+  optimised nothing when the table shows it did, cites a measurement that isn't there).
+Do not judge whether you would have made the same choice; only whether the reason holds.
+Return one verdict per item id, with a one-sentence why.
+
+{items}
+"""
+
+
+def _merge(outs: list[dict]) -> dict:
+    """Several analysts' answers -> one. A factor is cut if more than half the analysts cut it
+    (at exactly half: if their mean confidence is >= 0.7). Proposals and hypotheses are
+    pooled; identical chains are merged with the mean prediction."""
+    if len(outs) == 1:
+        return outs[0]
+    n = len(outs)
+    votes: dict[str, list[dict]] = {}
+    for o in outs:
+        for ct in o.get("cuts", []):
+            votes.setdefault(ct["factor"], []).append(ct)
+    cuts = []
+    for f, vs in votes.items():
+        conf = sum(v["confidence"] for v in vs) / len(vs)
+        if len(vs) * 2 > n or (len(vs) * 2 == n and conf >= 0.7):
+            cuts.append({"factor": f, "confidence": round(conf, 3),
+                         "reason": " | ".join(v["reason"] for v in vs), "votes": len(vs)})
+    props: dict[str, dict] = {}
+    for i, o in enumerate(outs):
+        for p in o.get("proposals", []):
+            k = space.chain_key([clean_step(s) for s in p["chain"]])
+            if k in props:
+                q = props[k]
+                q["_preds"].append(p["predicted_d_wns"])
+                q["reason"] += " | " + p["reason"]
+            else:
+                props[k] = {**p, "_preds": [p["predicted_d_wns"]], "analyst": i}
+    for q in props.values():
+        q["predicted_d_wns"] = round(sum(q["_preds"]) / len(q["_preds"]), 4)
+        q["n_analysts"] = len(q.pop("_preds"))
+    uncuts = sorted({u for o in outs for u in o.get("uncuts", [])})
+    return {"diagnosis": "\n\n".join(f"[analyst {i}] {o.get('diagnosis', '')}"
+                                      for i, o in enumerate(outs)),
+            "cuts": cuts, "uncuts": uncuts, "proposals": list(props.values()),
+            "hypotheses": [h for o in outs for h in o.get("hypotheses", [])]}
+
+
+def _critic_items(out: dict) -> tuple[str, dict]:
+    lines, ids = [], {}
+    for ct in out.get("cuts", []):
+        i = f"cut:{ct['factor']}"
+        ids[i] = ct
+        lines.append(f"- id `{i}`: CUT {ct['factor']} (confidence {ct['confidence']}). "
+                     f"Reason: {ct['reason']}")
+    for j, p in enumerate(out.get("proposals", [])):
+        i = f"prop:{j}"
+        ids[i] = p
+        lines.append(f"- id `{i}`: PROPOSE {space.chain_key([clean_step(x) for x in p['chain']])} "
+                     f"(predicted dWNS {p['predicted_d_wns']}). Reason: {p['reason']}")
+    for j, h in enumerate(out.get("hypotheses", [])):
+        i = f"hyp:{j}"
+        ids[i] = h
+        lines.append(f"- id `{i}`: HYPOTHESIS {h['claim']} (prediction: {h['prediction']})")
+    return "\n".join(lines), ids
+
+
+def critique(c: Campaign, did: str, rnd: int, evidence_md: str, out: dict, n: int) -> dict:
+    """Drop cuts and proposals whose reasons the critic finds unsupported (the factor stays in
+    the search; the chain is not run); hypotheses are kept but marked. If the critic fails,
+    the answer passes unchanged."""
+    items, ids = _critic_items(out)
+    if not ids:
+        return {**out, "critic": {"status": "nothing to check"}}
+    v = llm.ask(c.cfg, "critic", f"{did}_r{rnd}",
+                evidence_md + "\n\n" + CRITIC_INSTRUCTIONS.format(n=n, items=items),
+                CRITIC_SCHEMA, system=CRITIC_SYSTEM, key=f"critic_{did}")
+    if v is None:
+        return {**out, "critic": {"status": "failed; answer not checked"}}
+    bad = {x["id"]: x["why"] for x in v["verdicts"] if not x["supported"] and x["id"] in ids}
+    hyps = [{**h, "critic": "unsupported: " + bad[f"hyp:{j}"]} if f"hyp:{j}" in bad else h
+            for j, h in enumerate(out.get("hypotheses", []))]
+    return {**out,
+            "cuts": [ct for ct in out.get("cuts", []) if f"cut:{ct['factor']}" not in bad],
+            "proposals": [p for j, p in enumerate(out.get("proposals", [])) if f"prop:{j}" not in bad],
+            "hypotheses": hyps,
+            "critic": {"status": "ok", "checked": len(ids), "rejected": bad,
+                       "unjudged": sorted(set(ids) - {x["id"] for x in v["verdicts"]})}}
+
+
 def prune_design(c: Campaign, did: str, rnd: int, start: dict, extra: str = "",
                  prev: dict | None = None) -> dict:
     spec = c.spec()
     n_total = len(space.all_factors(spec))
     lineage = " > ".join(c.lineage(did, start["id"])) or "(input DCP, unmodified)"
-    prompt = "\n\n".join([
+    evid = "\n\n".join([
         evidence.design_brief(c, did),
         evidence.baseline_brief(c, did),
         evidence.kb_brief(c, did),
-        extra,
+        extra])
+    prompt = "\n\n".join([
+        evid,
         evidence.space_brief(spec),
         "## Factors\n" + factors_by_command(spec),
         f"## Start state for proposals\nstate {start['id']}: WNS {start['wns']} ns, reached by: {lineage}",
         INSTRUCTIONS.format(n_total=n_total, n_keep=int(n_total * KEEP_FRACTION),
                             n_cut=n_total - int(n_total * KEEP_FRACTION)),
     ])
-    out = llm.ask(c.cfg, "prune", f"{did}_r{rnd}", prompt, SCHEMA, system=SYSTEM,
-                  key=f"analyst_{did}")
+    models = c.cfg.analysts or [c.cfg.llm_model]
+
+    def one(i_m):
+        i, m = i_m
+        # the first analyst keeps the historical session key, so old campaigns resume it
+        key = f"analyst_{did}" if i == 0 else f"analyst{i}_{did}"
+        name = f"{did}_r{rnd}" if i == 0 else f"{did}_r{rnd}_a{i}"
+        return llm.ask(c.cfg, "prune", name, prompt, SCHEMA, system=SYSTEM, key=key, model=m)
+    with ThreadPoolExecutor(len(models)) as ex:
+        outs = [o for o in ex.map(one, enumerate(models)) if o is not None]
+    out = _merge(outs) if outs else None
+    if out is not None and c.cfg.critic:
+        out = critique(c, did, rnd, evid, out, len(outs))
     if out is None:
         # LLM failure: keep the previous prune, or keep everything
         res = prev or validate(spec, {"cuts": [], "proposals": [], "hypotheses": []})
         res = {**res, "llm_failed": True}
     else:
         res = validate(spec, out)
+        res["n_analysts"] = len(outs)
+        if "critic" in out:
+            res["critic"] = out["critic"]
     res.update(round=rnd, design=did, start=start["id"], start_wns=start["wns"])
     d = c.root / "prune" / did
     d.mkdir(parents=True, exist_ok=True)

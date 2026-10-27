@@ -89,7 +89,7 @@ class SessionStore:
 def run(cfg: Config, stage: str, name: str, task: str, cwd: Path, done: Callable[[], str | None],
         key: str | None = None, tools: list[str] = READ_TOOLS, system: str | None = None,
         timeout_s: float = 3600, idle_nudge_s: float = 300, max_nudges: int = 3,
-        task_file: str = "task.md") -> dict:
+        task_file: str = "task.md", model: str | None = None) -> dict:
     """Run one turn of a session and wait for its deliverable.
 
     done() returns None when the deliverable is ready and valid, or a message describing
@@ -109,7 +109,8 @@ def run(cfg: Config, stage: str, name: str, task: str, cwd: Path, done: Callable
     tname = re.sub(r"[^A-Za-z0-9_-]", "_", f"pr-{cfg.name}-{stage}-{name}")[:80]
     if _alive(tname):
         _tmux("kill-session", "-t", tname)
-    cmd = ["claude", "--model", cfg.llm_model, "--effort", cfg.llm_effort,
+    model = model or cfg.llm_model
+    cmd = ["claude", "--model", model, "--effort", cfg.llm_effort,
            "--allowedTools", *tools, "-n", tname]
     cmd += ["--resume", sid] if resume else ["--session-id", sid]
     if system and not resume:
@@ -151,7 +152,7 @@ def run(cfg: Config, stage: str, name: str, task: str, cwd: Path, done: Callable
             last_change = time.time()
     _close(tname)
     rec = {"stage": stage, "name": name, "session_id": sid, "tmux": tname, "resumed": resume,
-           "status": status, "problem": why, "nudges": nudges, "model": cfg.llm_model,
+           "status": status, "problem": why, "nudges": nudges, "model": model,
            "effort": cfg.llm_effort, "duration_s": round(time.time() - t0, 1),
            "usage": usage(sid), "cwd": str(cwd)}
     (cwd / f"{Path(task_file).stem}.session.json").write_text(json.dumps(rec, indent=1))

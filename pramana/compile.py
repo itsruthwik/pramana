@@ -75,7 +75,14 @@ def bins(kb: dict) -> dict:
 
 
 def extra_actions(kb: dict, n: int = 6) -> list[dict]:
-    """Single actions worth trying after the policy (gain per relative cost), each a step."""
+    """Single actions worth trying after the policy, each a step.
+
+    They run on the policy's end state, not on the input, so where the KB has interaction
+    evidence for the action after a re-placed state ('placed' kind) that is what ranks it:
+    actions that usually hurt there (interfering) or add nothing (substitute) are dropped, and
+    the gain after is used instead of the gain from the input. Actions without such evidence
+    are ranked by their gain from the input, behind the ones with evidence."""
+    after = {x["step"]: x for x in kb.get("interactions") or [] if x["after_kind"] == "placed"}
     out = []
     # placements already in the portfolio are not repeated; other placer directives stay as
     # extras (cheap insurance: on eval1 a late wirelength-driven re-place gave the largest gains)
@@ -94,8 +101,15 @@ def extra_actions(kb: dict, n: int = 6) -> list[dict]:
                 st["opts"] = {"+ripup": True}
         else:
             continue
-        out.append((p["median_d_wns"] / max(p["rel_cost"] or 1, 0.1), st))
-    out.sort(key=lambda x: -x[0])
+        cost = max(p["rel_cost"] or 1, 0.1)
+        x = after.get(f"{cmd}:{st['directive']}")
+        if x:
+            if x["type"] in ("interfering", "substitute") or x["median_after"] <= 0:
+                continue
+            out.append(((1, x["median_after"] / cost), st))
+        else:
+            out.append(((0, p["median_d_wns"] / cost), st))
+    out.sort(key=lambda x: (-x[0][0], -x[0][1]))
     return [st for _, st in out[:n]]
 
 
@@ -196,6 +210,14 @@ def context_md(kb: dict, b: dict) -> str:
                  f"(held-out families reached {b['lofo']:.0%} of best-known gain):")
         L.append(f"  {b['feature']} <= {b['threshold']}: " + " | then | ".join(chain_key(u) for u in b["low"] or []))
         L.append(f"  {b['feature']} > {b['threshold']}: " + " | then | ".join(chain_key(u) for u in b["high"] or []))
+    bb = (kb["policies"].get("by_budget") or {}).get("budgets") or []
+    if b["type"] == "one" and bb:
+        L += ["", "### Strategy by time budget",
+              "Budget is in multiples of this design's route_design -directive Explore time "
+              "(estimate it from a first route or from the design size). Best policy found for each "
+              "budget, and the fraction of best-known gain it reached on held-out families:"]
+        for x in bb:
+            L.append(f"- at least {x['rel_budget']}x: {x['policy']} ({x['lofo_frac_of_oracle']:.0%})")
     L += ["", "### Actions measured from the input checkpoint (one step each)",
           "action | designs | median dWNS | P(gain) | P(regress) | rel. cost | grade | ship",
           "--- | --- | --- | --- | --- | --- | --- | ---"]
@@ -205,6 +227,20 @@ def context_md(kb: dict, b: dict) -> str:
                  f"{p['p_regress']} | {p['rel_cost']} | {a['grade']} | {a['ship_mode']}")
     L.append("rel. cost = step time / that design's route Explore time. ship=plain means it never "
              "regressed in training; otherwise run it keep-if-better.")
+    inter = [x for x in kb.get("interactions") or [] if x["n_designs"] >= 3 and x["type"] != "neutral"]
+    if inter:
+        L += ["", "### Interactions: what a step does after earlier steps",
+              "after = state that was re-placed (placed) or only changed by post-route steps "
+              "(postroute); gain after = WNS change on top of that state; vs alone = the same step "
+              "from the input checkpoint.",
+              "after | step | type | designs | median gain after | median gain alone | grade",
+              "--- | --- | --- | --- | --- | --- | ---"]
+        for x in inter[:25]:
+            L.append(f"{x['after_kind']} | {x['step']} | {x['type']} | {x['n_designs']} | "
+                     f"{x['median_after']} | {x['median_alone']} | {x['grade']}")
+        L.append("complement = doing both beat either alone; substitute = helps alone, adds "
+                 "nothing after; interfering = usually made the earlier result worse; repeat = "
+                 "repeats a step already applied.")
     conds = [x for x in kb["conditions"] if x["status"] == "condition"]
     if conds:
         L += ["", "### Conditions (held on held-out families)"]
@@ -285,6 +321,8 @@ import math
 COST_MODEL = {cost_model}   # per command: secs ~ a * prims**b
 POLICIES = {policies}
 EXTRA = {extra}
+# one-bin policy per relative budget (budget / estimated route Explore secs), from the KB
+BY_BUDGET = {by_budget}
 
 
 @dataclass
@@ -309,7 +347,12 @@ def sequence_for(bin_name, budget_s, prims=None):
     'abstain' runs the default policy with every step as a candidate."""
     key = bin_name if bin_name in POLICIES else "all" if "all" in POLICIES else next(iter(POLICIES), None)
     steps = []
-    raw = list(POLICIES.get(key, [])) + list(EXTRA)
+    base = list(POLICIES.get(key, []))
+    if key == "all" and BY_BUDGET and prims and "ref" in COST_MODEL:
+        rel = budget_s / est_secs(["ref"], prims)
+        fit = [b for b in BY_BUDGET if b["rel_budget"] <= rel] or BY_BUDGET[:1]
+        base = fit[-1]["steps"] or base
+    raw = base + [e for e in EXTRA if e["name"] not in [s["name"] for s in base]]
     used = 0.0
     for s in raw:
         st = Step(s["name"], s["tcl"], "candidate" if bin_name == "abstain" else s["mode"], s["cmds"])
@@ -384,15 +427,26 @@ def run(c: Campaign, log=print) -> None:
     pols = {k: strip(v) for k, v in pols.items()}
     policy_keys = {s["name"] for v in pols.values() for s in v}
     extra = [s for s in strip(policy_steps(singles, kb)) if s["name"] not in policy_keys]
+    by_budget = []
+    if b["type"] == "one":
+        for x in ((kb["policies"].get("by_budget") or {}).get("budgets") or []):
+            if x.get("units"):
+                by_budget.append({"rel_budget": x["rel_budget"], "lofo": x["lofo_frac_of_oracle"],
+                                  "steps": strip(policy_steps(x["units"], kb))})
     (mith / "recipes.py").write_text(RECIPES_PY.format(
-        cost_model=repr(kb["cost_model"]), policies=repr(pols), extra=repr(extra)))
-    policy = {"bins": b, "policies": pols, "extra_actions": extra, "kb_meta": kb["meta"]}
+        cost_model=repr(kb["cost_model"]), policies=repr(pols), extra=repr(extra),
+        by_budget=repr(by_budget)))
+    policy = {"bins": b, "policies": pols, "extra_actions": extra, "kb_meta": kb["meta"],
+              "by_budget": by_budget}
     (mith / "ladder.py").write_text(LADDER_PY)
     (mith / "policy.json").write_text(json.dumps(policy, indent=1, sort_keys=True))
     md = ["# mithya policy (generated by pramana)", "", f"Bins: {b['type']}", ""]
     for k, ss in pols.items():
         md.append(f"## bin {k}")
         md += [f"- [{s['mode']}] {s['name']}: `{'; '.join(s['tcl'])}`" for s in ss]
+    for x in by_budget:
+        md.append(f"## budget >= {x['rel_budget']} x route Explore time (LOFO {x['lofo']})")
+        md += [f"- [{s['mode']}] {s['name']}" for s in x["steps"]]
     md += ["", "## extra actions (if budget remains)"]
     md += [f"- [{s['mode']}] {s['name']}" for s in extra]
     (mith / "POLICY.md").write_text("\n".join(md) + "\n")

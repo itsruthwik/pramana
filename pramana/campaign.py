@@ -50,8 +50,9 @@ class Campaign:
         d = self.design(did)
         return {"id": "input", "dcp": d["path"], "wns": self.profile(did)["input"]["wns"]}
 
-    def results(self, did: str | None = None) -> list[dict]:
-        """This campaign's runs plus the store's reference runs for its DCPs (same md5)."""
+    def results(self, did: str | None = None, include_noise: bool = False) -> list[dict]:
+        """This campaign's runs plus the store's reference runs for its DCPs (same md5).
+        Noise-estimate runs (perturbed constraints) are left out unless asked for."""
         md5 = {d["id"]: d["md5"] for d in self.designs()}
         own = self.runner.load()
         shared = [r for r in self.store_runner.load() if md5.get(r["design"]) == r.get("dcp_md5")]
@@ -67,7 +68,8 @@ class Campaign:
                     own.append(r)
                 elif rank.get(r["status"], 0) > rank.get(own[i]["status"], 0):
                     own[i] = r
-        return [r for r in own if (r["design"] == did if did else r["design"] in md5)]
+        return [r for r in own if (r["design"] == did if did else r["design"] in md5)
+                and (include_noise or r["purpose"] != "noise")]
 
     def best_state(self, did: str) -> dict:
         """Best legal state so far with a saved checkpoint (start point for the next depth)."""
@@ -123,10 +125,29 @@ class Campaign:
                 "dcp_mb": d["dcp_mb"], "dcp_md5": d["md5"], **kw}
 
     def noise_floor(self, did: str) -> float:
-        """From repeated identical runs; at least cfg.noise_floor_ns."""
+        """Run-to-run sensitivity of the result; at least cfg.noise_floor_ns.
+
+        Vivado is deterministic, so identical repeats give no spread. The estimate comes from
+        reference chains re-run with a tiny temporary clock tightening (baseline.NOISE): the
+        result moves only because the tool's trajectory changed. Per chain, half the range of
+        {reference, perturbed runs}; the design's floor is the largest of those."""
+        rs = self.results(did, include_noise=True)
+        key = (did, len(rs))
+        cache = self.__dict__.setdefault("_noise_cache", {})
+        if key in cache:
+            return cache[key]
         groups: dict[tuple, list[float]] = {}
-        for r in self.results(did):
-            if r["valid"]:
-                groups.setdefault((r["start"], r["chain_key"]), []).append(r["result"]["wns"])
-        spreads = [max(v) - min(v) for v in groups.values() if len(v) > 1]
-        return max([self.cfg.noise_floor_ns] + spreads)
+        ref = {r["tag"]: r for r in rs if r["purpose"] == "baseline" and r["valid"]}
+        for r in rs:
+            if r["purpose"] == "noise" and r["valid"] and r.get("noise_of") in ref:
+                groups.setdefault(("noise", r["noise_of"]), [ref[r["noise_of"]]["result"]["wns"]]) \
+                    .append(r["result"]["wns"])
+            elif r["valid"] and r["purpose"] != "noise":
+                # the recipe is part of the key: different recipes on the same (empty) chain
+                # are different runs, not repeats
+                groups.setdefault((r["start"], r["chain_key"], r.get("extra_tcl") or ""),
+                                  []).append(r["result"]["wns"])
+        spreads = [(max(v) - min(v)) / (2 if k[0] == "noise" else 1)
+                   for k, v in groups.items() if len(v) > 1]
+        cache[key] = round(max([self.cfg.noise_floor_ns] + spreads), 4)
+        return cache[key]
