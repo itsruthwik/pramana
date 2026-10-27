@@ -450,4 +450,6 @@ def run(c: Campaign, log=print) -> None:
     md += ["", "## extra actions (if budget remains)"]
     md += [f"- [{s['mode']}] {s['name']}" for s in extra]
     (mith / "POLICY.md").write_text("\n".join(md) + "\n")
-    log(f"[compile] maya -> {maya}, mithya -> {mith} (bins={b['type']})")
+    from . import adapters
+    written = adapters.write_all(kb, b, out / "adapters")
+    log(f"[compile] maya -> {maya}, mithya -> {mith}, adapters -> {sorted(written)} (bins={b['type']})")
