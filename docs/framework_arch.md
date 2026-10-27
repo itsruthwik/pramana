@@ -100,9 +100,16 @@ from the re-place).
 phys_opt "Optimized 0 nets" ⇒ that pass is unlikely to help), and (c) the first **cost**
 measurements.
 
+**Placer sweep.** Every remaining placer directive once from the input (10 per design), so
+placement choice is measured on every design, not only where the search happened to try it.
+
 **Noise.** Vivado is deterministic: identical repeats, and repeats with a different thread
-count (tried in dev2: 0.000 ns spread on 20/20 pairs), give no spread. So there are no
-repeats; the noise floor is a fixed 0.005 ns until a perturbation-based estimate exists.
+count (tried in dev2: 0.000 ns spread on 20/20 pairs), give no spread. Sensitivity is measured
+instead: two reference chains (place Default > phys_opt Explore; place Explore) are re-run
+with every clock tightened by 2 ps and by 4 ps while the placer and phys_opt run, restored
+before the final route and the measurement. The result moves only because the tool's
+trajectory changed; half the spread is the design's noise floor (at least 0.005 ns). A gain
+below it is not counted as a gain. Designs that set their own clock uncertainty are skipped.
 
 ## Campaign stages
 
@@ -126,6 +133,13 @@ evidence-reading LLM.
   giving a measured false-prune rate.
 - **Re-pruned every round** by the same analyst session (one persistent session per design),
   which sees new results, audit outcomes and its own prediction accuracy.
+
+**Several analysts and a critic.** `analysts` lists the models that analyse each design
+independently (default: one). Their answers are merged: a factor is cut only if more than half
+cut it, proposals and hypotheses are pooled. A critic session then checks every cut, proposal
+and hypothesis against the same evidence; cuts and proposals whose reasons misread or invent
+evidence are dropped (the factor stays in the search), hypotheses are marked. Numbers never
+come from the LLM, so the critic only guards which runs get made.
 
 **Draft KB.** Each prompt includes what other designs have taught so far, labelled as a prior
 measured on other designs: per-action effects across the other designs (median ΔWNS, how
@@ -190,6 +204,13 @@ design × policy pairs run, so adding a design costs about 2n runs, not n².
 - policies: the design × policy matrix scored as fraction of each design's best gain, one bin
   vs two bins compared on held-out families plus a shuffle test; below 3 designs an in-sample
   pick, marked as such;
+- policies per time budget: the same held-out-family pick, but each candidate scored by the
+  best routed state it reached within the budget (from per-step times and WNS in its run);
+  budgets are multiples of the design's route Explore time, so they transfer across sizes;
+- interactions: for each step run on an earlier state, its gain on top of that state vs from
+  the input, grouped by what produced the state (a re-placement, or post-route steps only):
+  complement (both beat either alone), substitute (helps alone, adds nothing after),
+  interfering (usually makes the earlier result worse), repeat;
 - negative knowledge, pruning rules confirmed by audits, mid-run signals (e.g. phys_opt
   optimised nothing ⇒ no later phys_opt on that state gained, 0 of 40), a runtime model;
 - mechanism notes written by the LLM, rejected if they contain numbers not in the KB.
@@ -205,7 +226,9 @@ The same KB compiles to:
   with `str.format`), `recipes.tcl`, `knowledge.json`.
 - **Deterministic flow (mithya):** `features.py`, `profile.tcl`, `classify.py`
   (`classify(features) -> bin`, abstains outside the training range), `recipes.py`
-  (`sequence_for(bin, budget_s) -> [Step]`, each step plain or keep-if-better),
+  (`sequence_for(bin, budget_s, prims) -> [Step]`, each step plain or keep-if-better; picks
+  the policy for the budget, then extra single actions ranked by their measured gain after a
+  re-placed state, dropping ones that interfere or add nothing there),
   `policy.json`, `POLICY.md`.
 
 ## Evaluation
@@ -221,6 +244,14 @@ every few steps evaluate KB(n) on a held-out campaign. The out-of-sample score a
 when more training stops helping; a second design order checks that the answer doesn't depend
 on order. Evaluations only read frozen snapshots, so they run in the background; discovery and
 confirm run side by side.
+
+**Tuning the generator** (`pramana.tune`). A finished campaign is replayed as if it had run
+with fewer rounds or without audits, hypothesis tests or discovery: only runs whose whole
+lineage passes the variant count, a policy is available only if the variant could have found
+it, and the one-bin policy is scored on held-out families. Score against Vivado hours shows
+which settings to use next; cheaper variants are optimistic (they can't show what they would
+have run instead). On dev1 and dev2, audits changed nothing and cost ~1 h; dropping tests,
+discovery or the third round lowered the best results found.
 
 ## Rules that apply everywhere
 
