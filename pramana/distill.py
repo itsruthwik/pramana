@@ -746,9 +746,9 @@ def run(c: Campaign, log=print) -> dict:
     log(f"[distill] placement portfolio: {pol['portfolio'].get('chains') or pol['portfolio'].get('status')}"
         f" (score by size {pol['portfolio'].get('score_by_k')})")
     pol["by_budget"] = policies_by_budget(c)
-    log("[distill] policy by budget: " + ", ".join(
+    log("[distill] policy by budget: " + (", ".join(
         f"x{b['rel_budget']}={b['policy']} ({b['lofo_frac_of_oracle']})"
-        for b in pol["by_budget"]["budgets"]) or pol["by_budget"].get("status"))
+        for b in pol["by_budget"]["budgets"]) or pol["by_budget"].get("status", "")))
     inter = interactions(c)
     log(f"[distill] interactions: {len(inter)} (" + ", ".join(
         f"{t} {sum(1 for x in inter if x['type'] == t)}"
