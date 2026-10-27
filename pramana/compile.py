@@ -135,12 +135,13 @@ proc ::pramana::legal {} {
     set hs 0; if {$h ne ""} {set hs [get_property SLACK $h]}
     return [expr {$e == 0 && $u == 0 && $hs >= 0}]
 }
-proc ::pramana::time_left {} {
+# 1 if a step expected to take `need` seconds still fits before the deadline
+proc ::pramana::time_left {{need 0}} {
     if {![info exists ::pramana::deadline]} {return 1}
-    return [expr {[clock seconds] < $::pramana::deadline}]
+    return [expr {[clock seconds] + $need < $::pramana::deadline}]
 }
-proc ::pramana::keep_if_better {tag script {tmpdir /tmp}} {
-    if {![::pramana::time_left]} { puts "PRAMANA $tag skipped (time budget spent)"; return 0 }
+proc ::pramana::keep_if_better {tag script {tmpdir /tmp} {need 0}} {
+    if {![::pramana::time_left $need]} { puts "PRAMANA $tag skipped (does not fit the time left)"; return 0 }
     set ck [file join $tmpdir "pramana_kib_[pid].dcp"]
     write_checkpoint -force $ck
     set before [::pramana::wns]

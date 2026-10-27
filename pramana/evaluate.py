@@ -27,19 +27,20 @@ def _load(mod_path: Path, name: str):
 
 
 def policy_tcl(steps, budget_s: float | None = None) -> str:
-    """No step starts after the budget is spent (a running step finishes: Vivado commands
-    can't be interrupted cleanly)."""
+    """No step starts unless its estimated time fits before the deadline (a running step
+    finishes: Vivado commands can't be interrupted cleanly). The first step always runs."""
     lines = [KIB_TCL]
     if budget_s:
         lines.append(f"set ::pramana::deadline [expr {{[clock seconds] + {int(budget_s)}}}]")
-    for s in steps:
+    for i, s in enumerate(steps):
         body = "; ".join(s.tcl)
+        need = 0 if i == 0 else int(getattr(s, "est_secs", 0) or 0)
         if s.mode == "committed":
-            lines.append(f"if {{[::pramana::time_left]}} {{\nputs \"PRAMANA step {s.name} "
+            lines.append(f"if {{[::pramana::time_left {need}]}} {{\nputs \"PRAMANA step {s.name} "
                          f"(committed)\"\n{body}\n}} else {{puts \"PRAMANA {s.name} skipped "
-                         f"(time budget spent)\"}}")
+                         f"(does not fit the time left)\"}}")
         else:
-            lines.append(f"::pramana::keep_if_better {{{s.name}}} {{{body}}} [pwd]")
+            lines.append(f"::pramana::keep_if_better {{{s.name}}} {{{body}}} [pwd] {need}")
     return "\n".join(lines)
 
 
