@@ -37,6 +37,7 @@ class Config:
     noise_floor_ns: float = 0.005     # minimum; raised by measured repeat spread
     discover_trials: int = 6
     designs: list[str] = field(default_factory=list)   # restrict to these ids (empty = all)
+    prior_kb: str = ""                # kb.json of an earlier campaign, shown to analysts as a prior
 
     @property
     def root(self) -> Path:

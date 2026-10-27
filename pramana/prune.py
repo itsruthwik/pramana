@@ -188,6 +188,7 @@ def prune_design(c: Campaign, did: str, rnd: int, start: dict, extra: str = "",
     prompt = "\n\n".join([
         evidence.design_brief(c, did),
         evidence.baseline_brief(c, did),
+        evidence.kb_brief(c, did),
         extra,
         evidence.space_brief(spec),
         "## Factors\n" + factors_by_command(spec),

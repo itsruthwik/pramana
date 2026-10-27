@@ -59,7 +59,8 @@ def action_profiles(c: Campaign) -> list[dict]:
     per: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
     incr: dict[str, list[float]] = defaultdict(list)
     for r in c.results():
-        if r["design"] not in ids or r.get("extra_tcl") or not r["chain"]:
+        if r["design"] not in ids or r.get("extra_tcl") or not r["chain"] \
+                or r["status"] not in ("ok", "error"):   # crashes are infrastructure, not results
             continue
         fs = set()
         for st in r["chain"]:
@@ -237,9 +238,20 @@ def policies(c: Campaign, rng: random.Random) -> dict:
     fam = _families(c)
     M, pols = policy_matrix(c)
     designs = [d for d in fam if all(d in row for row in M.values())] if M else []
-    if len(designs) < 3 or not M:
+    if not designs or not M:
         return {"status": "not enough transfer data", "n_policies": len(M)}
     oracle = {d: _oracle(c, d) for d in designs}
+    if len(designs) < 3:
+        # too few designs to hold any out (early steps of sequential training): in-sample pick
+        one = _pick(M, designs, oracle)
+        return {"designs": designs, "oracle_d_wns": oracle, "status": "in-sample (< 3 designs)",
+                "matrix": {k: {d: round(v, 4) for d, v in row.items()} for k, row in M.items()},
+                "one_bin": {"policy": one, "chain": pols.get(one, {}).get("chain"),
+                            "units": pols.get(one, {}).get("units"),
+                            "train_frac_of_oracle": round(statistics.mean(
+                                _frac(M[one][d], oracle[d]) for d in designs), 3),
+                            "lofo_frac_of_oracle": None},
+                "two_bin": {"accepted": False, "reason": "fewer than 3 designs"}, "bins": "one"}
     feats = {d: rule_features(c.features(d)) for d in designs}
     fnames = sorted({k for f in feats.values() for k, v in f.items() if isinstance(v, (int, float))})
     one = _pick(M, designs, oracle)

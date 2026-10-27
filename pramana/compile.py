@@ -159,8 +159,12 @@ def context_md(kb: dict, b: dict) -> str:
          ""]
     L.append("### Starting strategy")
     if b["type"] == "one":
-        L.append(f"One strategy for all designs (held-out families reached {b['lofo']:.0%} of each "
-                 f"design's best-known gain):")
+        if b["lofo"] is None:
+            L.append("One strategy for all designs (chosen on fewer than 3 training designs; "
+                     "not yet checked on held-out designs):")
+        else:
+            L.append(f"One strategy for all designs (held-out families reached {b['lofo']:.0%} of "
+                     f"each design's best-known gain):")
         L.append("    " + " | then | ".join(chain_key(u) for u in b["all"] or []))
         L.append("Tcl: ::pramana::policy_all (in recipes.tcl).")
     elif b["type"] == "two":

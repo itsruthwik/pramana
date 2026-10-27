@@ -332,18 +332,27 @@ def checkpoint_report(c: Campaign, rnd: int, st: dict) -> None:
 
 # --------------------------------------------------------------------------- main loop
 def run(c: Campaign, log=print) -> None:
+    """Rounds per design: each design gets cfg.rounds rounds (or stops early). Designs added
+    to a campaign later (sequential training) start at their own round 1."""
     st = load_state(c)
-    rng = random.Random(1234 + st["round"])
     designs = [d["id"] for d in c.designs()]
-    while st["round"] < c.cfg.rounds:
-        rnd = st["round"] + 1
-        active = [d for d in designs if d not in st["stopped"]]
+    dr = st.setdefault("design_round", {})
+    for d in designs:   # campaigns from before per-design rounds: all had st["round"] rounds
+        dr.setdefault(d, st["round"] if d in st["best_history"] else 0)
+    st.setdefault("iteration", st["round"])
+    while True:
+        active = [d for d in designs if d not in st["stopped"] and dr[d] < c.cfg.rounds]
         if not active:
-            log("[search] all designs stopped")
+            log("[search] no active designs")
             break
-        log(f"[search] round {rnd}: {len(active)} active designs, LLM weight {st['llm_weight']:.2f}")
+        it = st["iteration"] + 1
+        rng = random.Random(1234 + it)
+        rnd_of = {d: dr[d] + 1 for d in active}
+        log(f"[search] iteration {it}: {len(active)} active designs "
+            f"(rounds {sorted(set(rnd_of.values()))}), LLM weight {st['llm_weight']:.2f}")
 
         def get_prune(did):
+            rnd = rnd_of[did]
             prev = prune.latest(c, did)
             if prev is None:
                 return prune.prune_design(c, did, 0, c.best_state(did))
@@ -357,11 +366,13 @@ def run(c: Campaign, log=print) -> None:
             prunes = dict(zip(active, ex.map(get_prune, active)))
         jobs, preds = [], []
         for did in active:
-            j, p = allocate(c, did, prunes[did], c.best_state(did), rnd, st["llm_weight"], rng)
+            j, p = allocate(c, did, prunes[did], c.best_state(did), rnd_of[did],
+                            st["llm_weight"], rng)
             jobs += j
             preds += p
-            log(f"[search]   {did}: kept {prunes[did]['kept_factors']}/{prunes[did]['total_factors']}"
-                f" factors; {len(j)} runs ({', '.join(x['purpose'] for x in j)})")
+            log(f"[search]   {did} r{rnd_of[did]}: kept {prunes[did]['kept_factors']}/"
+                f"{prunes[did]['total_factors']} factors; {len(j)} runs "
+                f"({', '.join(x['purpose'] for x in j)})")
         before = {did: c.best_state(did)["wns"] for did in active}
         c.runner.run_many(jobs, log=log)
         pairs = score_predictions(c, preds)
@@ -370,6 +381,7 @@ def run(c: Campaign, log=print) -> None:
         if rho is not None:
             st["llm_weight"] = min(0.9, max(0.05, rho))   # trust = measured rank correlation
         for did in active:
+            dr[did] = rnd_of[did]
             after = c.best_state(did)["wns"]
             hist = st["best_history"].setdefault(did, [])
             hist.append(round(after - before[did], 4))
@@ -377,7 +389,8 @@ def run(c: Campaign, log=print) -> None:
             if len(hist) >= 2 and all(h <= nf for h in hist[-2:]):
                 st["stopped"].append(did)
                 log(f"[search]   {did}: stopped (no gain above {nf} ns for 2 rounds)")
-        st["round"] = rnd
+        st["iteration"] = it
+        st["round"] = max(dr.values())
         save_state(c, st)
-        log(f"[search] round {rnd} done; prediction rho={rho}; writing checkpoint report")
-        checkpoint_report(c, rnd, st)
+        log(f"[search] iteration {it} done; prediction rho={rho}; writing checkpoint report")
+        checkpoint_report(c, it, st)

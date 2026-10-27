@@ -67,7 +67,7 @@ class Campaign:
                     own.append(r)
                 elif rank.get(r["status"], 0) > rank.get(own[i]["status"], 0):
                     own[i] = r
-        return [r for r in own if did is None or r["design"] == did]
+        return [r for r in own if (r["design"] == did if did else r["design"] in md5)]
 
     def best_state(self, did: str) -> dict:
         """Best legal state so far with a saved checkpoint (start point for the next depth)."""
@@ -108,9 +108,12 @@ class Campaign:
         """Chain keys from the input DCP to state sid."""
         out = []
         while sid != "input":
-            st = self.state(did, sid)
-            out.insert(0, st["chain_key"])
-            sid = st["start"]
+            r = next(r for r in self.results(did) if r["run_id"] == sid)
+            label = r["chain_key"]
+            if r.get("extra_tcl"):
+                label = (label + " + " if label else "") + f"custom Tcl recipe ({r.get('tag')})"
+            out.insert(0, label)
+            sid = r["start"]
         return out
 
     def job(self, did: str, state: dict, chain: list[dict], purpose: str, **kw) -> dict:

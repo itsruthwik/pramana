@@ -3,6 +3,7 @@ and a compact description of the search space."""
 from __future__ import annotations
 
 import csv
+import json
 import re
 from pathlib import Path
 
@@ -154,3 +155,92 @@ def space_brief(spec: dict) -> str:
             out.append(f"  {k} [{o['type']}{', max_pick=' + str(o['max_pick']) if o.get('max_pick') else ''}]{pre}"
                        f"{vals}: {o.get('help') or o.get('why', '')}"[:400])
     return "\n".join(out)
+
+
+# --------------------------------------------------------------------------- shared knowledge
+def _feature_distance(a: dict, b: dict, keys: list[str], spread: dict) -> float:
+    return sum(((a[k] - b[k]) / spread[k]) ** 2 for k in keys) ** 0.5
+
+
+def kb_brief(c: Campaign, did: str, n_actions: int = 15, n_similar: int = 3) -> str:
+    """What other designs have taught so far, for the analyst of `did`.
+
+    Two sources: (1) the draft KB of this campaign, recomputed from every other design's runs
+    each time it is called (so each round sees the latest results), and (2) an optional prior
+    KB from an earlier campaign (cfg.prior_kb). Labelled as a prior: measured on other designs,
+    not facts about this one."""
+    import statistics
+    from .distill import action_profiles   # local: distill imports evidence-free modules
+    L = ["## Knowledge from other designs (a prior, measured on OTHER designs; this design may "
+         "differ, and audits/tests still check it)"]
+    others = [d["id"] for d in c.designs() if d["id"] != did]
+    rows = []
+    if others:
+        for a in action_profiles(c):
+            pdv = {d: e for d, e in a["per_design"].items() if d != did}
+            if len(pdv) < 2:
+                continue
+            vals = list(pdv.values())
+            nf = {d: c.noise_floor(d) for d in pdv}
+            rows.append((statistics.median(vals), a["factor"], len(pdv),
+                         sum(1 for d, e in pdv.items() if e > nf[d]) / len(pdv),
+                         sum(1 for d, e in pdv.items() if e < -nf[d]) / len(pdv),
+                         a["profile"].get("incremental_median_d_wns"),
+                         a["profile"].get("incremental_n")))
+    if rows:
+        # shrink toward 0 by sample size so 2-design effects don't outrank 9-design ones
+        rows.sort(key=lambda r: -r[0] * r[2] / (r[2] + 3))
+        L += ["", "### Single actions from the input DCP, across other designs (this campaign)",
+              "action | designs | median dWNS | P(gain) | P(regress) | median dWNS from an improved state (n)",
+              "--|--|--|--|--|--"]
+        for med, f, n, pg, pr, inc, ni in rows[:n_actions]:
+            L.append(f"{f} | {n} | {med:+.3f} | {pg:.2f} | {pr:.2f} | "
+                     f"{'' if inc is None else f'{inc:+.3f} ({ni})'}")
+        worst = [r for r in rows if r[3] == 0 and r[2] >= 3]
+        if worst:
+            L.append("Never gained on any other design (>=3 designs): "
+                     + ", ".join(r[1] for r in worst[:12]))
+    # nearest designs by features, with their best sequences
+    if others:
+        me = c.features(did)
+        keys = [k for k, v in me.items() if isinstance(v, (int, float)) and not isinstance(v, bool)]
+        feats = {o: c.features(o) for o in others}
+        keys = [k for k in keys if all(isinstance(feats[o].get(k), (int, float)) for o in others)]
+        spread = {}
+        for k in keys:
+            vs = [me[k]] + [feats[o][k] for o in others]
+            spread[k] = (max(vs) - min(vs)) or 1.0
+        near = sorted(others, key=lambda o: _feature_distance(me, feats[o], keys, spread))[:n_similar]
+        L += ["", "### Most similar designs (by features) and their best results so far"]
+        for o in near:
+            b = c.best_state(o)
+            gain = round(b["wns"] - c.input_state(o)["wns"], 3)
+            lin = " > ".join(c.lineage(o, b["id"])) or "(no improvement found)"
+            L.append(f"- {o}: best dWNS {gain:+.3f} ns via: {lin}")
+    # prior KB from an earlier campaign
+    pk = getattr(c.cfg, "prior_kb", "") or ""
+    if pk and Path(pk).exists():
+        kb = json.loads(Path(pk).read_text())
+        L += ["", f"### Prior KB from campaign {kb['meta']['campaign']} "
+              f"({len(kb['meta']['designs'])} designs, {kb['meta']['n_runs']} runs)"]
+        pol = kb.get("policies", {}).get("one_bin") or {}
+        if pol:
+            L.append(f"Best general policy (fraction of each design's best on held-out families: "
+                     f"{pol.get('lofo_frac_of_oracle')}): {pol.get('policy')}")
+        acts = sorted(kb.get("actions", []), key=lambda a: (a["grade"], -a["profile"]["median_d_wns"]))
+        for a in acts[:n_actions]:
+            p = a["profile"]
+            L.append(f"- {a['factor']}: median {p['median_d_wns']:+.3f} over {p['n_designs']} designs, "
+                     f"P(gain) {p['p_gain']}, P(regress) {p['p_regress']}, grade {a['grade']}")
+        conds = [x for x in kb.get("conditions", []) if x.get("status") == "condition"]
+        for x in conds:
+            L.append(f"- condition: {x['factor']} {x['rule']} (grade {x.get('grade')})")
+        seen = set()
+        neg = [x for x in kb.get("negative", []) if not (x["factor"] in seen or seen.add(x["factor"]))]
+        if neg:
+            L.append("Not worth running: " + "; ".join(f"{x['factor']} ({x['why']})" for x in neg[:12]))
+        for s in kb.get("signals", []):
+            L.append(f"- signal: {s['signal']} -> {s['use']}")
+    if len(L) == 1:
+        return ""
+    return "\n".join(L)
