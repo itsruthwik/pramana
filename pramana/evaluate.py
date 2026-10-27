@@ -26,12 +26,18 @@ def _load(mod_path: Path, name: str):
     return m
 
 
-def policy_tcl(steps) -> str:
+def policy_tcl(steps, budget_s: float | None = None) -> str:
+    """No step starts after the budget is spent (a running step finishes: Vivado commands
+    can't be interrupted cleanly)."""
     lines = [KIB_TCL]
+    if budget_s:
+        lines.append(f"set ::pramana::deadline [expr {{[clock seconds] + {int(budget_s)}}}]")
     for s in steps:
         body = "; ".join(s.tcl)
         if s.mode == "committed":
-            lines.append(f"puts \"PRAMANA step {s.name} (committed)\"\n{body}")
+            lines.append(f"if {{[::pramana::time_left]}} {{\nputs \"PRAMANA step {s.name} "
+                         f"(committed)\"\n{body}\n}} else {{puts \"PRAMANA {s.name} skipped "
+                         f"(time budget spent)\"}}")
         else:
             lines.append(f"::pramana::keep_if_better {{{s.name}}} {{{body}}} [pwd]")
     return "\n".join(lines)
@@ -58,7 +64,7 @@ def run(train: Campaign, ev: Campaign, budget_s: float = 3000, log=print,
         steps = rec_mod.sequence_for(b, budget_s, prims)
         plan[did] = {"bin": b, "steps": [(s.name, s.mode, round(s.est_secs)) for s in steps]}
         jobs.append(ev.job(did, ev.input_state(did), [], "evaluate",
-                           tag=f"mithya:{label}:{b}", extra_tcl=policy_tcl(steps)))
+                           tag=f"mithya:{label}:{b}", extra_tcl=policy_tcl(steps, budget_s)))
     (ev.root / f"eval_plan_{label}.json").write_text(json.dumps(plan, indent=1))
     ev.runner.run_many(jobs, log=log)
     # identical policies (same Tcl) are the same run: look every job up, new or reused
