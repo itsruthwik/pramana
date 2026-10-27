@@ -1,6 +1,7 @@
 """Run one Vivado batch process, with a timeout and a free-memory gate."""
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import json
 import os
@@ -34,6 +35,19 @@ def _acquire_slot():
             except BlockingIOError:
                 f.close()
         time.sleep(10)
+
+
+@contextlib.contextmanager
+def vivado_slot():
+    """Hold one machine-wide Vivado slot for the duration of the block. For callers that
+    launch Vivado indirectly (e.g. an external agent such as maya) and so cannot go
+    through run_vivado."""
+    slot = _acquire_slot()
+    try:
+        yield
+    finally:
+        fcntl.flock(slot, fcntl.LOCK_UN)
+        slot.close()
 
 
 @dataclass
