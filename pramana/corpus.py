@@ -11,9 +11,9 @@ import json
 import re
 from pathlib import Path
 
-FPL = Path("/mnt/vault0/rsunketa/FPL_contest")
-DEFAULT_SOURCES = [FPL / "data/fpl26_contest_benchmarks", FPL / "new-dcp/dcp"]
-
+# FPL = Path("/mnt/vault0/rsunketa/FPL_contest")
+# DEFAULT_SOURCES = [FPL / "data/fpl26_contest_benchmarks", FPL / "new-dcp/dcp"]
+DEFAULT_SOURCES = ["/mnt/vault2/kmhatre/workspace/pramana/fpl26_contest_benchmarks"]
 # Provisional family labels by benchmark origin.
 FAMILY_RULES = [
     (r"^rosetta_", "rosetta_hls"),

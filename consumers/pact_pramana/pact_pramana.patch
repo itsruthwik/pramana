@@ -1,0 +1,113 @@
+--- a/FDAgents/memory.py
++++ b/FDAgents/memory.py
+@@ -193,6 +193,8 @@
+     reasoning_cycles: list = field(default_factory=list)
+     decision_reviews: list = field(default_factory=list)
+     exhausted_probes: dict = field(default_factory=dict)
++    # [pramana] advisory prior shown to the Decision LLM (context text + matched cases)
++    learned_prior: dict = field(default_factory=dict)
+ 
+     # How many recent probe responses ride along in the LLM state.
+     CUSTOM_RESPONSE_WINDOW = 3
+@@ -2547,4 +2549,6 @@
+         menu_timing = self.current_telemetry.get("action_menu_timing")
+         if isinstance(menu_timing, dict):
+             state["action_menu_epoch_cost"] = copy.deepcopy(menu_timing)
++        if self.learned_prior:                      # [pramana]
++            state["learned_prior"] = copy.deepcopy(self.learned_prior)
+         return state
+--- a/FDAgents/agent.py
++++ b/FDAgents/agent.py
+@@ -27,6 +27,7 @@
+ import copy
+ import hashlib
+ import json
++import os
+ import logging
+ import math
+ import re
+@@ -2468,6 +2469,26 @@
+     }
+ 
+ 
++def pramana_learned_prior(kb, features, cfg) -> dict:
++    """[pramana] Advisory prior for the Decision LLM when FDAGENTS_PRAMANA_CONTEXT names a
++    pramana context.md: its text plus the knowledge-base cases matched to this design's
++    features (the public release computes no matches in staged mode). Never gates anything."""
++    path = os.environ.get("FDAGENTS_PRAMANA_CONTEXT")
++    if not path:
++        return {}
++    prior = {
++        "source": "pramana",
++        "authority": "prior measured on OTHER training designs; advisory only, never gates",
++        "context_md": Path(path).read_text(encoding="utf-8"),
++    }
++    try:
++        if kb is not None and features is not None:
++            prior["matched_cases"] = kb.render_matches(kb.match(features, cfg=cfg))
++    except Exception as exc:  # noqa: BLE001 - advisory data must never break a run
++        prior["matched_cases_error"] = str(exc)[:200]
++    return prior
++
++
+ def seed_suggested_targets(memory: Memory, analysis: dict) -> None:
+     """Informational target hints for the LLM (never gates)."""
+     fanout_nets = analysis.get("fanout_nets") or []
+@@ -7154,6 +7175,7 @@
+                 [] if replay_enabled or staged_react_enabled
+                 else kb.render_matches(matches)
+             )
++            memory.learned_prior = pramana_learned_prior(kb, features, cfg)  # [pramana]
+             if not replay_enabled and not staged_react_enabled:
+                 seed_suggested_targets(memory, analysis)
+             if telemetry_refreshed:
+@@ -7390,6 +7412,7 @@
+                 [] if replay_enabled or staged_react_enabled
+                 else kb.render_matches(matches)
+             )
++            memory.learned_prior = pramana_learned_prior(kb, features, cfg)  # [pramana]
+             memory.baseline["timing_profile"] = analysis.get("timing_profile") or {}
+             memory.baseline["features"] = features.to_dict()
+             if not replay_enabled and not staged_react_enabled:
+@@ -8396,6 +8419,11 @@
+                         and str((decision.raw or {}).get("error_class", ""))
+                         == "provider_failure"
+                     )
++                    # [pramana] optionally retry an invalid (non-provider) decision like a
++                    # provider failure instead of ending the run on the first miss
++                    if bool(cfg.get("react.retry_invalid_decisions", False)) and decision is not None \
++                            and decision.action == "invalid":
++                        provider_failure = True
+                     if (
+                         provider_failure
+                         and memory.tokens_remaining() > 0
+@@ -10237,6 +10265,7 @@
+                             [] if replay_enabled or staged_react_enabled
+                             else kb.render_matches(matches)
+                         )
++                        memory.learned_prior = pramana_learned_prior(kb, features, cfg)  # [pramana]
+                         analysis = refreshed
+                         if not replay_enabled and not staged_react_enabled:
+                             seed_suggested_targets(memory, analysis)
+--- a/FDAgents/stages.py
++++ b/FDAgents/stages.py
+@@ -1982,7 +1982,9 @@
+             handler=unavailable,
+             terminal_tools={"select_action_menu_entry"},
+             required_tool_calls={},
+-            max_turns=1,
++            # [pramana] configurable: non-OpenAI models sometimes answer a forced tool_choice
++            # in prose on the first turn; the shipped value is 1.
++            max_turns=max(1, int(self.cfg.get("react.selector_turns", 1))) if self.cfg is not None else 1,
+             tool_choice={"type": "function", "name": "select_action_menu_entry"},
+             deadline_monotonic=deadline_monotonic,
+             max_cost_usd=max_cost_usd,
+@@ -2252,7 +2254,7 @@
+             handler=unavailable,
+             terminal_tools={"select_replay_action"},
+             required_tool_calls={},
+-            max_turns=1,
++            max_turns=max(1, int(self.cfg.get("react.selector_turns", 1))) if self.cfg is not None else 1,  # [pramana]
+             tool_choice={"type": "function", "name": "select_replay_action"},
+             deadline_monotonic=deadline_monotonic,
+             max_cost_usd=max_cost_usd,

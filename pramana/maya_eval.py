@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 
 from .config import REPO, VIVADO_SETTINGS
-from .vivado import _run_in_slot, est_mem_gb, vivado_slot
+from .vivado import _run_in_slot, est_mem_gb, reap_under, vivado_slot
 
 MAYA_DIR = REPO / "consumers" / "maya"
 MAYA = MAYA_DIR / "maya.py"
@@ -145,6 +145,7 @@ def run(bundle_dir, dcp, out_dir, kb_variant: str, budget_s: float = 3600,
     t0 = time.time()
     with vivado_slot():
         res = _run_in_slot(cmd, out, budget_s + GRACE_S, need)
+        reap_under(out, log=print)   # the agent's Vivado outlives the agent (see pramana.vivado)
     r = parse_run(run_dir, output_dcp)
     r.update(kb=kb_variant, dcp=str(dcp), bundle=str(bundle_dir) if bundle_dir else None,
              provider=provider, model=model, budget_s=budget_s, secs=round(time.time() - t0, 1),

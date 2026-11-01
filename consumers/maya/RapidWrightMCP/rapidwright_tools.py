@@ -62,6 +62,11 @@ def initialize_rapidwright(jvm_max_memory: str = "4G") -> Dict[str, Any]:
         # locally-built classes instead of whatever the shell env has.
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         rw_root = os.path.join(project_root, "RapidWright")
+        # pramana: an explicit RAPIDWRIGHT_PATH (a built checkout elsewhere) wins over the
+        # submodule location, which is empty in this vendored copy.
+        env_root = os.environ.get("RAPIDWRIGHT_PATH")
+        if env_root and os.path.isdir(os.path.join(env_root, "jars")):
+            rw_root = env_root
         os.environ["RAPIDWRIGHT_PATH"] = rw_root
         jars_dir = os.path.join(rw_root, "jars")
         jar_entries = [os.path.join(jars_dir, j) for j in os.listdir(jars_dir) if j.endswith(".jar")]

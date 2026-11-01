@@ -6,3 +6,4 @@ campaigns
 .Xil/
 *.pem
 store
+consumers/pact/

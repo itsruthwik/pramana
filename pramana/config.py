@@ -11,7 +11,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-VIVADO_SETTINGS = "/mnt/vault0/tools/Vitis_2025.2/2025.2/Vivado/settings64.sh"
+VIVADO_SETTINGS = "/mnt/vault2/tools/AMD/2025.2/Vivado/settings64.sh"
 VIVADO_VERSION = "2025.2"
 
 

@@ -552,7 +552,9 @@ def write_pact(kb: dict, b: dict, out: Path) -> dict[str, Path]:
         "bins": ({"type": b["type"]} if b["type"] != "two" else
                  {"type": "two", "feature": b["feature"], "threshold": b["threshold"],
                   "pact_profile_item": PACT_PROFILE.get(b["feature"])}),
-        "contraindications": [{"pramana_factor": n["factor"], "reason": n["why"], "cut_on": n["cut_on"]}
+        "contraindications": [{"pramana_factor": n["factor"], "reason": n["why"],
+                               # pruned entries carry cut_on; measured ones carry a profile
+                               "cut_on": n.get("cut_on", (n.get("profile") or {}).get("n_designs"))}
                               for n in kb["negative"]],
         "suppress_rules": [{"signal": s["signal"], "meaning": s["meaning"], "use": s["use"],
                             "p_gain_given_zero": s["p_gain_given_zero"], "n_zero": s["n_zero"],
@@ -566,7 +568,189 @@ def write_pact(kb: dict, b: dict, out: Path) -> dict[str, Path]:
     files["pact/recipe_library.json"].write_text(_dump(lib))
     files["pact/prior_cases.jsonl"].write_text(
         "".join(json.dumps(c, sort_keys=True) + "\n" for c in cases))
+    files.update(write_pact_cases(kb, b, out))
     files["pact/README.md"].write_text(_pact_readme(kb, lib, cases))
+    return files
+
+
+# PACT v2.0.0 (FDAgents, the public contest artifact) loads knowledge as YAML *cases*:
+# FDAgents/knowledge_base.py `Case` = {id, description, signature, confidence, bottleneck,
+# suggested_skill_order, initial_params, core_skills, budget_hint_s, evidence, notes}.
+# Signatures are soft ranges over FDAgents.features.DesignFeatures fields; raw Tcl is rejected
+# by the loader (keys command/tcl/script/tcl_ref), so recipes map to PACT's typed presets.
+PACT_PHYSOPT_PRESETS = ("Default", "Explore", "AggressiveExplore", "AggressiveFanoutOpt", "AddRetime")
+PACT_PLACE_RECIPES = {"ExtraTimingOpt": "extratiming_no_relax",
+                      "ExtraNetDelay_high": "extranetdelay_no_relax",
+                      "AltSpreadLogic_high": "altspread_explore"}
+PACT_RAW_TCL_KEYS = {"command", "tcl", "script", "tcl_ref"}
+
+
+def _pact_signature(f: dict, wide: bool = False) -> dict:
+    """pramana features -> soft ranges over PACT DesignFeatures fields."""
+    def rng(x, lo, hi):
+        return {"min": round(lo, 4), "max": round(hi, 4)}
+    if wide:   # matches any failing design (score 1.0): the general one-bin case
+        return {"closure_ratio": {"max": 0.0}, "lut_util_pct": {"min": 0.0},
+                "max_logic_levels": {"min": 1}, "max_fanout": {"min": 1}}
+    cr = -float(f.get("wns_frac") or 0.0)                 # PACT: WNS / period (negative = failing)
+    lut = 100.0 * float(f.get("util_lut") or 0.0)
+    lv = float(f.get("levels_max") or 1.0)
+    fo = 10 ** float(f.get("log10_max_fanout") or 0.0)
+    sig = {"closure_ratio": rng(cr, cr * 1.6, cr * 0.6) if cr < 0 else {"min": -0.05},
+           "lut_util_pct": rng(lut, lut / 3, min(100.0, max(lut * 3, lut + 5))),
+           "max_logic_levels": {"min": int(max(1, lv - 3)), "max": int(lv + 4)},
+           "max_fanout": {"min": int(fo / 3), "max": int(fo * 3)},
+           "hard_macro_present": bool(sum(float(f.get(k) or 0) for k in
+                                          ("end_bram_frac", "end_dsp_frac", "end_uram_frac",
+                                           "start_bram_frac", "start_dsp_frac")) > 0.0)}
+    lf = float(f.get("logic_frac") or 0.0)
+    sig["bottleneck_any"] = ["routing", "placement", "mixed"] if lf < 0.35 else ["logic", "mixed"]
+    return sig
+
+
+def _pact_plan(kb: dict, b: dict) -> tuple[list[str], list[str], dict, list[str]]:
+    """(suggested_skill_order, core_skills, initial_params, chain_names) from the one-bin
+    policy, the placement portfolio and the ranked phys_opt directives."""
+    pol = kb.get("policies") or {}
+    chains: list[list[dict]] = []
+    for unit in (pol.get("one_bin") or {}).get("units") or []:
+        chains.append(unit)
+    for unit in (pol.get("portfolio") or {}).get("units") or []:
+        chains.append(unit)
+    place_dirs, has_place, has_physopt = [], False, False
+    for ch in chains:
+        for st in ch:
+            if st.get("cmd") in ("place", "opt"):
+                has_place = True
+                if st.get("cmd") == "place" and st.get("directive") in PACT_PLACE_RECIPES:
+                    place_dirs.append(st["directive"])
+            if st.get("cmd") == "phys_opt":
+                has_physopt = True
+    fresh = list(dict.fromkeys(PACT_PLACE_RECIPES[d] for d in place_dirs))
+    ranked = sorted((a for a in kb["actions"] if a["factor"].startswith("phys_opt:directive=")),
+                    key=lambda a: -(a["profile"].get("median_d_wns") or 0))
+    physopt = [a["factor"].split("=", 1)[1] for a in ranked
+               if a["factor"].split("=", 1)[1] in PACT_PHYSOPT_PRESETS
+               and (a["profile"].get("median_d_wns") or 0) > 0][:4]
+    overconstrain = any("set_clock_uncertainty" in (r.get("tcl") or "") and (r.get("own_d_wns") or 0) > 0.01
+                        for r in kb.get("recipes") or [])
+    replicate = any(a["factor"] == "phys_opt:directive=AlternateReplication"
+                    and (a["profile"].get("median_d_wns") or 0) > 0 for a in kb["actions"])
+    order, core, params = [], [], {}
+    if has_place:
+        order.append("fresh_place_route"); core.append("fresh_place_route")
+        if fresh:
+            params["fresh_place_route"] = {"target_candidates": fresh, "max_candidates": len(fresh)}
+    if has_physopt or physopt:
+        order.append("phys_opt")
+        if physopt:
+            params["phys_opt"] = {"target_candidates": physopt}
+    if overconstrain:
+        order.append("implementation_recipe")
+        params["implementation_recipe"] = {"target_candidates": ["derived_pressure_replace_route_v1"]}
+    if replicate:
+        order.append("force_replicate")
+    names = [chain_key(ch) for ch in chains]
+    return order, core or order[:1], params, list(dict.fromkeys(names))
+
+
+def _pact_notes(kb: dict, limit: int = 6) -> str:
+    L = []
+    notes = kb.get("notes") or {}
+    for k in list(notes)[:limit]:
+        L.append(f"{k.split(':', 1)[-1]}: {notes[k]}")
+    neg = list(dict.fromkeys(n["factor"] for n in kb.get("negative") or []))
+    if neg:
+        L.append("Not worth running on the training designs: " + ", ".join(neg[:10]))
+    for s in kb.get("signals") or []:
+        L.append(f"Signal: {s['signal']} -> {s['use']}")
+    return "\n".join(L)
+
+
+def _assert_no_raw_tcl(node, path="cases") -> None:
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if str(k).lower() in PACT_RAW_TCL_KEYS:
+                raise ValueError(f"PACT rejects key {k!r} at {path}")
+            _assert_no_raw_tcl(v, f"{path}.{k}")
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            _assert_no_raw_tcl(v, f"{path}[{i}]")
+
+
+def write_pact_cases(kb: dict, b: dict, out: Path) -> dict[str, Path]:
+    """pact/cases.yaml in PACT v2.0.0's loader schema, plus context.md for the Decision LLM."""
+    m = kb["meta"]
+    order, core, params, chain_names = _pact_plan(kb, b)
+    oracle = (kb.get("policies") or {}).get("oracle_d_wns") or {}
+    matrix = (kb.get("policies") or {}).get("matrix") or {}
+    onebin = (kb.get("policies") or {}).get("one_bin") or {}
+    pol_name = onebin.get("policy")
+    lofo = onebin.get("lofo_frac_of_oracle")
+    notes = _pact_notes(kb)
+    cases = []
+    # the general case: the learned one-bin policy, matches every failing design
+    evidence = []
+    for d in m["designs"]:
+        ev = {"benchmark": d, "family": corpus.family_of(d), "best_known_d_wns_ns": oracle.get(d)}
+        if pol_name and pol_name in matrix and d in matrix[pol_name]:
+            ev["policy_d_wns_ns"] = matrix[pol_name][d]
+        ev["note"] = ("dWNS in ns from the input routed checkpoint (positive = better); "
+                      "measured by pramana, independent Vivado re-measurement")
+        evidence.append(ev)
+    cases.append({
+        "id": f"PRAMANA_{m['campaign'].upper()}_ONE_BIN_POLICY",
+        "description": (f"Learned on {len(m['designs'])} training designs in {len(m['families'])} "
+                        f"families ({m['part']}, Vivado {m['vivado']}, {m['n_runs']} runs). Start with the "
+                        f"learned policy {pol_name!r} (fraction of each design's best-known gain on held-out "
+                        f"families: {lofo}); the placement portfolio is {chain_names[1:5]}. Then one "
+                        "post-route phys_opt pass. A prior measured on OTHER designs: advisory."),
+        "signature": _pact_signature({}, wide=True),
+        "confidence": round(min(0.9, max(0.3, float(lofo or 0.3))), 2),
+        "bottleneck": "mixed",
+        "suggested_skill_order": order,
+        "core_skills": core,
+        "budget_hint_s": 3600,
+        "initial_params": params,
+        "evidence": evidence,
+        "notes": notes,
+    })
+    # one case per training design: its features and what worked on it
+    feats = kb.get("design_features") or {}
+    for d in m["designs"]:
+        f = feats.get(d) or {}
+        best_pol = max((p for p in matrix if d in matrix[p]), key=lambda p: matrix[p][d], default=None)
+        acts = []
+        for a in kb["actions"]:
+            v = (a.get("per_design") or {}).get(d)
+            if v is not None and v > 0:
+                acts.append((v, a["factor"]))
+        acts.sort(reverse=True)
+        cases.append({
+            "id": f"PRAMANA_{m['campaign'].upper()}_{re.sub(r'[^A-Za-z0-9]+', '_', d).upper()}",
+            "description": (f"Training design {d} (family {corpus.family_of(d)}): best measured chain "
+                            f"{best_pol!r} gave +{matrix.get(best_pol, {}).get(d)} ns; best-known gain "
+                            f"{oracle.get(d)} ns. Single actions that gained from the input: "
+                            + ", ".join(f"{fac} (+{v})" for v, fac in acts[:6])),
+            "signature": _pact_signature(f),
+            "confidence": 0.6,
+            "bottleneck": "routing" if float(f.get("logic_frac") or 0) < 0.35 else "logic_depth",
+            "suggested_skill_order": order,
+            "core_skills": core,
+            "budget_hint_s": 3600,
+            "initial_params": params,
+            "evidence": [{"benchmark": d, "family": corpus.family_of(d),
+                          "best_known_d_wns_ns": oracle.get(d),
+                          "best_chain": best_pol,
+                          "note": "dWNS in ns from the input routed checkpoint; pramana measurement"}],
+            "notes": notes,
+        })
+    _assert_no_raw_tcl(cases)
+    out.mkdir(parents=True, exist_ok=True)
+    files = {"pact/cases.yaml": out / "cases.yaml", "pact/context.md": out / "context.md"}
+    # JSON is valid YAML: PACT's yaml.safe_load reads it, and it stays byte-deterministic.
+    files["pact/cases.yaml"].write_text(json.dumps({"cases": cases}, indent=1, sort_keys=False) + "\n")
+    files["pact/context.md"].write_text(_cmp.context_md(kb, b))
     return files
 
 
@@ -575,9 +759,23 @@ def _pact_readme(kb, lib, cases) -> str:
     by_fam: dict[str, int] = {}
     for r in lib["recipes"]:
         by_fam[r["family"]] = by_fam.get(r["family"], 0) + 1
-    L = ["# pramana KB in PACT's recipe-library format (UNVERIFIED)", "",
+    L = ["# pramana KB for PACT", "",
          f"Generated by `pramana.adapters` from `kb.json` of campaign `{m['campaign']}` "
          f"({len(m['designs'])} designs, {m['n_runs']} runs, {m['part']}, Vivado {m['vivado']}).", "",
+         "## Verified format: `cases.yaml` (PACT v2.0.0 / FDAgents, public contest artifact)", "",
+         "`cases.yaml` is in the schema PACT's loader reads (`FDAgents/knowledge_base.py` `Case`): "
+         "one general case for the learned one-bin policy (signature matches any failing design) "
+         "and one case per training design (soft ranges over PACT `DesignFeatures`: closure_ratio = "
+         "-wns_frac, lut_util_pct, max_logic_levels, max_fanout, hard_macro_present, bottleneck). "
+         "`suggested_skill_order` / `initial_params` map pramana's policy to PACT's typed presets: "
+         "place directives -> `fresh_place_route` named recipes (ExtraTimingOpt -> "
+         "extratiming_no_relax, ExtraNetDelay_high -> extranetdelay_no_relax, AltSpreadLogic_high -> "
+         "altspread_explore), phys_opt directives -> `phys_opt` targets, clock over-constraint "
+         "recipes -> `implementation_recipe` derived_pressure_replace_route_v1. PACT rejects raw Tcl "
+         "in knowledge, so pramana's Tcl recipes are not carried. `context.md` is the maya context, "
+         "shown to PACT's Decision LLM by the `[pramana]` patch (consumers/pact_pramana). Load with "
+         "`FDAGENTS_KNOWLEDGE_PATHS=<this dir>/cases.yaml` or `pramana.pact_eval --kb pramana`.", "",
+         "## Paper-derived format (older, UNVERIFIED): `recipe_library.json`, `prior_cases.jsonl`", "",
          f"**Unverified against code.** PACT ({PACT_PAPER}) says its source is in {PACT_REPO}. When "
          "checked, that repository had only a README (\"code release coming soon\", licence \"to be "
          "determined\"). The format below follows the paper's description (Sec. III, Table II, "

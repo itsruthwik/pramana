@@ -133,3 +133,31 @@ def _run_in_slot(cmd: str, cwd: Path, timeout_s: float, need_gb: float) -> Vivad
 def est_mem_gb(dcp_mb: float) -> float:
     """Rough peak memory for one run, from DCP size (measured on this corpus: ~2 GB floor)."""
     return 2.5 + 0.09 * dcp_mb
+
+
+def reap_under(root: Path, log=None) -> list[int]:
+    """Kill processes whose working directory is under `root` (the leftovers of a finished agent
+    run). The agents' MCP servers start Vivado through a pty (its own session), so it survives
+    the agent's exit and spins at 100% CPU forever; cwd is the one reliable link back to the run."""
+    root = str(Path(root).resolve())
+    victims = []
+    for p in Path("/proc").iterdir():
+        if not p.name.isdigit() or int(p.name) == os.getpid():
+            continue
+        try:
+            cwd = os.readlink(p / "cwd")
+        except OSError:
+            continue
+        if cwd == root or cwd.startswith(root + "/"):
+            victims.append(int(p.name))
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        for pid in victims:
+            try:
+                os.kill(pid, sig)
+            except OSError:
+                pass
+        if sig == signal.SIGTERM:
+            time.sleep(3)
+    if victims and log:
+        log(f"reaped {len(victims)} leftover process(es) under {root}: {victims}")
+    return victims
