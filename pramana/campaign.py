@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from . import corpus, store
+from . import corpus, inputs, store
 from .config import Config
 from .features import from_profile
 from .runner import Runner
@@ -49,9 +49,21 @@ class Campaign:
         return json.loads((self.root / "space.json").read_text())
 
     # ---------------------------------------------------------------- states
+    def input_wns(self, did: str) -> float:
+        """Setup WNS of the input DCP, from the input check (inputs.py, written by S2 or S1).
+        Store entries made before the input check existed fall back to profile.json."""
+        d = self.design(did)
+        rec = inputs.load(self.cfg, d)
+        if rec is not None:
+            return rec["input"]["wns"]
+        if (self.profile_dir(did) / "profile.json").exists():
+            return self.profile(did)["input"]["wns"]
+        raise RuntimeError(f"{did}: input DCP not checked yet; run the baseline (or profile) "
+                           f"stage first")
+
     def input_state(self, did: str) -> dict:
         d = self.design(did)
-        return {"id": "input", "dcp": d["path"], "wns": self.profile(did)["input"]["wns"]}
+        return {"id": "input", "dcp": d["path"], "wns": self.input_wns(did)}
 
     def results(self, did: str | None = None, include_noise: bool = False) -> list[dict]:
         """This campaign's runs plus the store's reference runs for its DCPs (same md5).
@@ -77,10 +89,14 @@ class Campaign:
         return [r for r in own if (r["design"] == did if did else r["design"] in md5)
                 and (include_noise or r["purpose"] != "noise")]
 
-    def best_state(self, did: str) -> dict:
-        """Best legal state so far with a saved checkpoint (start point for the next depth)."""
+    def best_state(self, did: str, skip_purposes: frozenset | set = frozenset(),
+                   before: str | None = None) -> dict:
+        """Best legal state so far with a saved checkpoint (start point for the next depth).
+        skip_purposes / before (a 'YYYY-MM-DD HH:MM:SS' time) leave out some results."""
         best = self.input_state(did)
         for r in self.results(did):
+            if r["purpose"] in skip_purposes or (before and r.get("time", "") >= before):
+                continue
             if r["valid"] and r.get("dcp") and Path(r["dcp"]).exists() and \
                     r["result"]["wns"] > best["wns"]:
                 best = {"id": r["run_id"], "dcp": r["dcp"], "wns": r["result"]["wns"],

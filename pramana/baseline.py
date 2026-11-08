@@ -1,11 +1,19 @@
-"""S2: Explore per command, plus a repeat for the noise floor.
+"""S2: one Explore reference run per Vivado command, from each input DCP.
+
+Input: the DCP itself. Not S1: the input check in inputs.py measures part, md5 and input WNS
+first.
 
 These runs are the controls for everything later, the evidence the pruner reads (Explore runs
-every internal pass and logs what each did), and the first cost/noise measurements.
+every internal pass and logs what each did), and the first cost measurements.
+
+Reduced 2026-11-04 from 22 runs to 5 per design. Removed, and kept in baseline_v1.py: the
+place_default control, the placer-directive sweep, the two re-place chains and the four noise
+runs. Consequences: the noise floor is cfg.noise_floor_ns unless later stages repeat a chain,
+and distill's placement portfolio sees only the placements that S2 and S4 actually run.
 """
 from __future__ import annotations
 
-from . import flow
+from . import inputs
 from .campaign import Campaign
 
 BASELINES = {
@@ -15,75 +23,11 @@ BASELINES = {
     "physopt_explore_preroute": [{"cmd": "place", "directive": "Default"},
                                  {"cmd": "phys_opt", "directive": "Explore"}],
     "opt_explore": [{"cmd": "opt", "directive": "Explore"}],
-    # control for opt_explore: opt forces a re-place, so re-place alone must be measured too
-    "place_default": [{"cmd": "place", "directive": "Default"}],
 }
-# Vivado is deterministic: identical repeats, and repeats with another thread count (tried in
-# dev2: 0.000 ns spread on 20/20 design x chain pairs), give no spread. So no repeats; the
-# noise floor is cfg.noise_floor_ns until a perturbation-based estimate exists.
-REPEATS: list[str] = []
-REPEAT_THREADS = 2
 
 
-# Placer-directive sweep: every remaining placer directive once from the input. Placement
-# choice carried the largest transferable gains on eval1, and a portfolio of placements can
-# only be chosen from a design x directive matrix measured on every design. Quick and
-# RuntimeOptimized trade quality for speed and are left out.
-SWEEP_SKIP = {"Default", "Explore", "Quick", "RuntimeOptimized"}
-
-
-def place_sweep(spec: dict) -> dict[str, list[dict]]:
-    ds = spec["commands"]["place"]["directives"]
-    return {f"place_{d}": [{"cmd": "place", "directive": d}] for d in sorted(ds)
-            if d not in SWEEP_SKIP}
-
-
-# Noise estimate: re-run two reference chains with the clocks tightened by a few ps while the
-# placer and phys_opt run, restored before the final route and the measurement. The result
-# moves only because the tool's trajectory changed, so the spread is the sensitivity that a
-# measured "gain" has to exceed. Designs that carry their own clock uncertainty are skipped
-# (the step errors out, so the run is invalid and ignored).
-NOISE_OF = ["physopt_explore_preroute", "place_explore"]
-NOISE_PS = [2, 4]
-
-
-def perturb_steps(ps: int) -> tuple[dict, dict]:
-    on = ("set _p [get_timing_paths -quiet -setup -max_paths 1]; "
-          "set _w0 [expr {$_p eq \"\" ? 0 : [get_property SLACK $_p]}]; "
-          "set_clock_uncertainty -setup 0 [get_clocks]; "
-          "set _p [get_timing_paths -quiet -setup -max_paths 1]; "
-          "set _w1 [expr {$_p eq \"\" ? 0 : [get_property SLACK $_p]}]; "
-          "if {abs($_w0 - $_w1) > 1e-6} {error \"design sets its own clock uncertainty\"}; "
-          f"set_clock_uncertainty -setup {ps / 1000:.3f} [get_clocks]")
-    off = "set_clock_uncertainty -setup 0 [get_clocks]"
-    return ({"cmd": "tcl", "name": f"perturb_on_{ps}ps", "tcl": on},
-            {"cmd": "tcl", "name": "perturb_off", "tcl": off + "\n" + flow.ROUTE_IF_NEEDED})
-
-
-def noise_chains() -> dict[str, tuple[str, list[dict]]]:
-    out = {}
-    for tag in NOISE_OF:
-        for ps in NOISE_PS:
-            on, off = perturb_steps(ps)
-            out[f"noise_{tag}_{ps}ps"] = (tag, [on] + BASELINES[tag] + [off])
-    return out
-
-
-# Second placement after phys_opt: on eval1, re-placing an already phys_opt'd netlist gained
-# where a single placement didn't (digit-recognition: +0.19 with Default, +0.33 with
-# AltWLDrivenPlacement, vs -0.05 for AltWL alone). Measured on every design so the placement
-# portfolio can choose it.
-REPLACE2 = ["Default", "AltWLDrivenPlacement"]
-
-
-def replace2_chains() -> dict[str, list[dict]]:
-    return {f"replace2_{d}": [{"cmd": "place", "directive": "Default"},
-                              {"cmd": "phys_opt", "directive": "Explore"},
-                              {"cmd": "place", "directive": d}] for d in REPLACE2}
-
-
-def reference_chains(c: Campaign) -> dict[str, list[dict]]:
-    return {**BASELINES, **place_sweep(c.spec()), **replace2_chains()}
+def reference_chains(c: Campaign | None = None) -> dict[str, list[dict]]:
+    return dict(BASELINES)
 
 
 def jobs(c: Campaign) -> list[dict]:
@@ -93,18 +37,17 @@ def jobs(c: Campaign) -> list[dict]:
         st = c.input_state(d["id"])
         for tag, chain in refs.items():
             out.append(c.job(d["id"], st, chain, "baseline", tag=tag))
-        for tag, (of, chain) in noise_chains().items():
-            out.append(c.job(d["id"], st, chain, "noise", tag=tag, noise_of=of))
-        for tag in REPEATS:
-            out.append(c.job(d["id"], st, BASELINES[tag], "baseline", tag=tag + "_rep", rep=1,
-                             threads=REPEAT_THREADS))
     # cheap designs first so evidence for them arrives early
     out.sort(key=lambda j: j["dcp_mb"])
     return out
 
 
 def run(c: Campaign, log=print) -> list[dict]:
-    """Reference runs go to the framework store; ones already there are skipped."""
+    """Reference runs go to the framework store; ones already there are skipped.
+
+    Self-contained: the input check (inputs.py) gives each design's part, md5 and input WNS
+    and excludes unusable designs, so S2 does not need S1 profile to have run."""
+    inputs.check_all(c.cfg, c.designs(), log=log)
     return c.store_runner.run_many(jobs(c), log=log)
 
 

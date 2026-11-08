@@ -30,7 +30,7 @@ MAYA_DIR = REPO / "consumers" / "maya"
 MAYA = MAYA_DIR / "maya.py"
 # Built RapidWright checkout used by maya's RapidWrightMCP server (read-only use).
 RAPIDWRIGHT_PATH = os.environ.get("MAYA_RAPIDWRIGHT_PATH",
-                                  "/mnt/vault0/rsunketa/FPL_contest/RapidWright")
+                                  "/scratch/kmhatre/workspace/dac/tools/RapidWright")
 # maya's own provider names (consumers/maya/maya.py _PROVIDER_DEFAULTS); anything starting
 # with http(s):// is used as an OpenAI-compatible base URL instead.
 PROVIDERS = ("openrouter", "advent", "asu_rc", "nvidia")

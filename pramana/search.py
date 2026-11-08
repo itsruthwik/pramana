@@ -345,6 +345,23 @@ def run(c: Campaign, log=print) -> None:
         if not active:
             log("[search] no active designs")
             break
+        pend = st.get("pending")
+        if pend:
+            # a job boundary interrupted this iteration: finish the SAME runs (the ones already
+            # done are skipped), not a fresh selection from the now-improved best states
+            it, jobs, preds, before = pend["iteration"], pend["jobs"], pend["preds"], pend["before"]
+            # designs dropped from the campaign since the plan was made are left out
+            rnd_of = {d: r for d, r in pend["rnd_of"].items() if d in designs}
+            active = list(rnd_of)
+            jobs = [j for j in jobs if j["design"] in rnd_of]
+            preds = [q for q in preds if q["design"] in rnd_of]
+            log(f"[search] iteration {it}: resuming {len(jobs)} planned runs for "
+                f"{len(active)} designs")
+            c.runner.run_many(jobs, log=log)
+            rho = _finish_iteration(c, st, dr, it, active, rnd_of, preds, before, log)
+            log(f"[search] iteration {it} done; prediction rho={rho}; writing checkpoint report")
+            checkpoint_report(c, it, st)
+            continue
         it = st["iteration"] + 1
         rng = random.Random(1234 + it)
         rnd_of = {d: dr[d] + 1 for d in active}
@@ -374,23 +391,35 @@ def run(c: Campaign, log=print) -> None:
                 f"{prunes[did]['total_factors']} factors; {len(j)} runs "
                 f"({', '.join(x['purpose'] for x in j)})")
         before = {did: c.best_state(did)["wns"] for did in active}
-        c.runner.run_many(jobs, log=log)
-        pairs = score_predictions(c, preds)
-        st["pred_pairs"] += [list(p) for p in pairs]
-        rho = spearman([tuple(p) for p in st["pred_pairs"]])
-        if rho is not None:
-            st["llm_weight"] = min(0.9, max(0.05, rho))   # trust = measured rank correlation
-        for did in active:
-            dr[did] = rnd_of[did]
-            after = c.best_state(did)["wns"]
-            hist = st["best_history"].setdefault(did, [])
-            hist.append(round(after - before[did], 4))
-            nf = c.noise_floor(did)
-            if len(hist) >= 2 and all(h <= nf for h in hist[-2:]):
-                st["stopped"].append(did)
-                log(f"[search]   {did}: stopped (no gain above {nf} ns for 2 rounds)")
-        st["iteration"] = it
-        st["round"] = max(dr.values())
+        # saved before any run starts, so an interrupted iteration resumes with the same runs
+        st["pending"] = {"iteration": it, "jobs": jobs, "preds": preds, "before": before,
+                         "rnd_of": rnd_of}
         save_state(c, st)
+        c.runner.run_many(jobs, log=log)
+        rho = _finish_iteration(c, st, dr, it, active, rnd_of, preds, before, log)
         log(f"[search] iteration {it} done; prediction rho={rho}; writing checkpoint report")
         checkpoint_report(c, it, st)
+
+
+def _finish_iteration(c: Campaign, st: dict, dr: dict, it: int, active: list[str],
+                      rnd_of: dict, preds: list[dict], before: dict, log) -> float | None:
+    """Score predictions, update best history and stops, save state (clears `pending`)."""
+    pairs = score_predictions(c, preds)
+    st["pred_pairs"] += [list(p) for p in pairs]
+    rho = spearman([tuple(p) for p in st["pred_pairs"]])
+    if rho is not None:
+        st["llm_weight"] = min(0.9, max(0.05, rho))   # trust = measured rank correlation
+    for did in active:
+        dr[did] = rnd_of[did]
+        after = c.best_state(did)["wns"]
+        hist = st["best_history"].setdefault(did, [])
+        hist.append(round(after - before[did], 4))
+        nf = c.noise_floor(did)
+        if len(hist) >= 2 and all(h <= nf for h in hist[-2:]):
+            st["stopped"].append(did)
+            log(f"[search]   {did}: stopped (no gain above {nf} ns for 2 rounds)")
+    st["iteration"] = it
+    st["round"] = max(dr.values())
+    st.pop("pending", None)
+    save_state(c, st)
+    return rho

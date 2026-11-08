@@ -11,6 +11,8 @@ purpose 'discover', so the rest of the framework sees them like any other run.
 from __future__ import annotations
 
 import json
+import os
+import socket
 import subprocess
 import sys
 import time
@@ -40,12 +42,47 @@ def submit(c: Campaign, did: str, recipe: Path) -> str:
     (td / "trials").mkdir(exist_ok=True)
     tcl = Path(recipe).read_text()
     (td / "trials" / f"{tid}.tcl").write_text(tcl)
-    (td / "trials" / f"{tid}.json").write_text(json.dumps({"id": tid, "status": "running",
-                                                             "recipe": str(recipe)}))
-    subprocess.Popen([sys.executable, "-m", "pramana.trial", c.cfg.name, did, "_work", tid],
-                     cwd=str(Path(__file__).resolve().parent.parent),
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    _spawn(c, did, tid, {"id": tid, "status": "running", "recipe": str(recipe)})
     return tid
+
+
+def _spawn(c: Campaign, did: str, tid: str, rec: dict) -> None:
+    """Start the detached worker for a trial and record where it runs, so a later wait can tell
+    a live worker from one that died (e.g. its Slurm job ended) and restart it."""
+    proc = subprocess.Popen([sys.executable, "-m", "pramana.trial", c.cfg.name, did, "_work", tid],
+                            cwd=str(Path(__file__).resolve().parent.parent),
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            start_new_session=True)
+    rec = {**rec, "host": socket.gethostname(), "pid": proc.pid}
+    (trial_dir(c, did) / "trials" / f"{tid}.json").write_text(json.dumps(rec))
+
+
+def _worker_alive(d: dict) -> bool:
+    if d.get("host") != socket.gethostname() or not d.get("pid"):
+        return False                     # started on another node/job, or before pids were kept
+    try:
+        os.kill(int(d["pid"]), 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    try:                                 # a zombie or a reused pid is not our worker
+        cmd = Path(f"/proc/{d['pid']}/cmdline").read_bytes().replace(b"\0", b" ")
+        return b"pramana.trial" in cmd and d["id"].encode() in cmd
+    except OSError:
+        return False
+
+
+def restart_stale(c: Campaign, did: str) -> list[str]:
+    """Re-launch trials still marked running whose worker is gone. Returns their ids."""
+    td = trial_dir(c, did) / "trials"
+    out = []
+    for p in sorted(td.glob("t*.json")) if td.exists() else []:
+        d = json.loads(p.read_text())
+        if d.get("status") == "running" and not _worker_alive(d):
+            _spawn(c, did, d["id"], {k: d[k] for k in ("id", "status", "recipe") if k in d})
+            out.append(d["id"])
+    return out
 
 
 def _work(c: Campaign, did: str, tid: str) -> None:
@@ -78,6 +115,8 @@ def wait(c: Campaign, did: str, tid: str, max_s: float = 540) -> str:
             d = json.loads(p.read_text())
             if d.get("status") != "running":
                 return json.dumps(d, indent=1)
+            if not _worker_alive(d):
+                restart_stale(c, did)
         time.sleep(10)
     return json.dumps({"id": tid, "status": "running", "note": "still running; call wait again"})
 

@@ -26,6 +26,13 @@ def _log_dir(cfg: Config, stage: str) -> Path:
     return d
 
 
+def _sfx(base: Path, suffix: str) -> Path:
+    """base + suffix. Not Path.with_suffix: design ids contain dots (diffeq2_2025.2, proxy.3),
+    and with_suffix would cut the name at the last dot, so every call for a design would
+    overwrite one file."""
+    return base.parent / (base.name + suffix)
+
+
 def ask(cfg: Config, stage: str, name: str, prompt: str, schema: dict,
         timeout_s: float = 1800, retries: int = 1, system: str | None = None,
         key: str | None = None, model: str | None = None) -> dict | None:
@@ -34,7 +41,7 @@ def ask(cfg: Config, stage: str, name: str, prompt: str, schema: dict,
     d = _log_dir(cfg, stage)
     ts = time.strftime("%Y%m%d-%H%M%S")
     base = d / f"{name}_{ts}"
-    base.with_suffix(".prompt.md").write_text(prompt)
+    _sfx(base, ".prompt.md").write_text(prompt)
     cwd = d / "sessions" / (key or name)
     ans = cwd / f"{name}_answer.json"
     task = (prompt + "\n\n## Output\nWrite your answer as one JSON object to the file "
@@ -66,9 +73,9 @@ def ask(cfg: Config, stage: str, name: str, prompt: str, schema: dict,
             so = json.loads(ans.read_text())
             break
     rec["structured_output"] = so
-    base.with_suffix(".response.json").write_text(json.dumps(rec, indent=1))
+    _sfx(base, ".response.json").write_text(json.dumps(rec, indent=1))
     if so is None:
-        base.with_suffix(".failed.txt").write_text(f"{rec.get('status')}: {rec.get('problem')}")
+        _sfx(base, ".failed.txt").write_text(f"{rec.get('status')}: {rec.get('problem')}")
     return so
 
 
@@ -80,7 +87,7 @@ def agent(cfg: Config, stage: str, name: str, prompt: str, cwd: Path,
     d = _log_dir(cfg, stage)
     ts = time.strftime("%Y%m%d-%H%M%S")
     base = d / f"{name}_{ts}"
-    base.with_suffix(".prompt.md").write_text(prompt)
+    _sfx(base, ".prompt.md").write_text(prompt)
     out = Path(cwd) / deliverable
 
     def done() -> str | None:
@@ -97,7 +104,7 @@ def agent(cfg: Config, stage: str, name: str, prompt: str, cwd: Path,
                       task_file="task.md")
     rec["num_turns"] = rec["usage"]["assistant_turns"]
     rec["is_error"] = rec["status"] != "ok"
-    base.with_suffix(".response.json").write_text(json.dumps(rec, indent=1))
+    _sfx(base, ".response.json").write_text(json.dumps(rec, indent=1))
     return rec
 
 

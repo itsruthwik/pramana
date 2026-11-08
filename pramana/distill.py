@@ -209,6 +209,10 @@ def policy_matrix(c: Campaign) -> tuple[dict, dict]:
     fam = _families(c)
     pols_p = c.root / "policies.json"
     pols = json.loads(pols_p.read_text()) if pols_p.exists() else {}
+    # with a transfer limit (confirm_top_k) only transferred policies are measured on every
+    # design; the others (replayed on their own design only) cannot be compared across designs
+    if any("transferred" in p for p in pols.values()):
+        pols = {k: p for k, p in pols.items() if p.get("transferred") or p.get("baseline")}
     M: dict[str, dict[str, float]] = defaultdict(dict)
     for r in c.results():
         if r["design"] in fam and r["start"] == "input" and r["chain_key"] in pols \
@@ -503,19 +507,22 @@ def placement_portfolio(c: Campaign, max_k: int = 4, cost_per_extra: float = 0.0
         return set(st) <= {"cmd", "directive"}
     for r in c.results():
         ch = r["chain"]
+        # an invalid run is a measured (bad) result, not a missing one
         if r["design"] not in fam or r["start"] != "input" or r.get("extra_tcl") \
-                or not r["valid"] or r["purpose"] == "probe" or not ch or ch[0]["cmd"] != "place":
+                or r["status"] in ("crash",) or r["purpose"] == "probe" or not ch \
+                or ch[0]["cmd"] != "place":
             continue
         ok = all(plain(st) for st in ch) and (
             len(ch) == 1 or
             (len(ch) == 2 and ch[1]["cmd"] == "phys_opt") or
-            # second placement after phys_opt (baseline.REPLACE2)
+            # second placement after phys_opt (baseline_v1.REPLACE2; S4 may also produce it)
             (len(ch) == 3 and [st["cmd"] for st in ch] == ["place", "phys_opt", "place"]))
         if not ok:
             continue
         k = chain_key(ch)
         row = cand.setdefault(k, {})
-        row[r["design"]] = max(row.get(r["design"], -1e9), r["d_wns"])
+        row[r["design"]] = max(row.get(r["design"], -1e9),
+                               r["d_wns"] if r["valid"] and r["d_wns"] is not None else INVALID)
         units[k] = ch
     full = sorted(k for k, v in cand.items() if all(d in v for d in ids))
     if not ids or not full:

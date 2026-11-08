@@ -26,15 +26,27 @@ def _load(mod_path: Path, name: str):
     return m
 
 
-def policy_tcl(steps, budget_s: float | None = None) -> str:
+STEP_LIMIT_S = 900      # a step estimated to take longer is not started (one batch session
+                        # cannot stop a running Vivado command; the session itself is killed
+                        # at budget + EVAL_GRACE_S)
+EVAL_GRACE_S = 900
+
+
+def policy_tcl(steps, budget_s: float | None = None, step_limit_s: float | None = STEP_LIMIT_S) -> str:
     """No step starts unless its estimated time fits before the deadline (a running step
-    finishes: Vivado commands can't be interrupted cleanly). The first step always runs."""
+    finishes: Vivado commands can't be interrupted cleanly) and is at most step_limit_s.
+    The first step always runs unless it alone exceeds the step limit."""
     lines = [KIB_TCL]
     if budget_s:
         lines.append(f"set ::pramana::deadline [expr {{[clock seconds] + {int(budget_s)}}}]")
     for i, s in enumerate(steps):
         body = "; ".join(s.tcl)
-        need = 0 if i == 0 else int(getattr(s, "est_secs", 0) or 0)
+        est = int(getattr(s, "est_secs", 0) or 0)
+        if step_limit_s and est > step_limit_s:
+            lines.append(f"puts \"PRAMANA {s.name} skipped (estimated {est} s > step limit "
+                         f"{int(step_limit_s)} s)\"")
+            continue
+        need = 0 if i == 0 else est
         if s.mode == "committed":
             lines.append(f"if {{[::pramana::time_left {need}]}} {{\nputs \"PRAMANA step {s.name} "
                          f"(committed)\"\n{body}\n}} else {{puts \"PRAMANA {s.name} skipped "
@@ -65,7 +77,8 @@ def run(train: Campaign, ev: Campaign, budget_s: float = 3000, log=print,
         steps = rec_mod.sequence_for(b, budget_s, prims)
         plan[did] = {"bin": b, "steps": [(s.name, s.mode, round(s.est_secs)) for s in steps]}
         jobs.append(ev.job(did, ev.input_state(did), [], "evaluate",
-                           tag=f"mithya:{label}:{b}", extra_tcl=policy_tcl(steps, budget_s)))
+                           tag=f"mithya:{label}:{b}", extra_tcl=policy_tcl(steps, budget_s),
+                           timeout_s=budget_s + EVAL_GRACE_S))
     (ev.root / f"eval_plan_{label}.json").write_text(json.dumps(plan, indent=1))
     ev.runner.run_many(jobs, log=log)
     # identical policies (same Tcl) are the same run: look every job up, new or reused

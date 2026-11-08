@@ -30,7 +30,7 @@ from .vivado import _run_in_slot, est_mem_gb, reap_under, vivado_slot
 AGENT_DIR = REPO / "consumers" / "official"
 AGENT = AGENT_DIR / "dcp_optimizer.py"
 RAPIDWRIGHT_PATH = os.environ.get("MAYA_RAPIDWRIGHT_PATH",
-                                  "/mnt/vault1/kmhatre/workspace/FPL_26_contest_asu/RapidWright")
+                                  "/scratch/kmhatre/workspace/dac/tools/RapidWright")
 JAVA11 = "/usr/lib/jvm/java-11-openjdk-amd64"
 KB_VARIANTS = ("hand", "none", "pramana")
 GRACE_S = 900
@@ -77,7 +77,8 @@ def parse_run(run_dir: Path) -> dict:
 
 def run(bundle, dcp, out_dir, kb: str, budget_s: float = 3600, model: str | None = None, *,
         key_env: str = "OPENROUTER_API_KEY", base_url: str | None = None,
-        python: str | None = None, vivado_settings: str = VIVADO_SETTINGS) -> dict:
+        python: str | None = None, vivado_settings: str = VIVADO_SETTINGS,
+        step_timeout_s: float = 900) -> dict:
     """Run the official agent on `dcp` with one KB variant, holding a Vivado slot throughout, then
     re-measure input and output independently. Returns the result (also out_dir/result.json)."""
     out = Path(out_dir).resolve()
@@ -102,6 +103,7 @@ def run(bundle, dcp, out_dir, kb: str, budget_s: float = 3600, model: str | None
            f"export RAPIDWRIGHT_PATH={q(RAPIDWRIGHT_PATH)}; "
            'export CLASSPATH="$RAPIDWRIGHT_PATH/bin:$RAPIDWRIGHT_PATH/jars/*"; '
            f'export OPENROUTER_API_KEY="${{{key_env}}}"; '
+           f"export PRAMANA_STEP_TIMEOUT_S={int(step_timeout_s)}; "   # one tool call / step at most
            f"cd {q(str(out))}; exec {q(py)} {' '.join(q(a) for a in args)} > {q(str(log))} 2>&1")
     need = est_mem_gb(dcp.stat().st_size / 1e6) + EXTRA_GB
     t0 = time.time()
@@ -117,13 +119,26 @@ def run(bundle, dcp, out_dir, kb: str, budget_s: float = 3600, model: str | None
              if output_dcp.exists() else None)
     in_wns = (m_in.get("result") or {}).get("wns")
     out_wns = (m_out.get("result") or {}).get("wns") if m_out else None
+    # the harness safety net (run/pramana_best.dcp, banked by the agent at each new best WNS):
+    # measured the same way; the better valid one of output and banked best is scored
+    best_dcp = run_dir / "pramana_best.dcp"
+    m_best = (measure_dcp(best_dcp, out / "measure_best", clocks=in_clocks or None)
+              if best_dcp.exists() else None)
+    best_wns = (m_best.get("result") or {}).get("wns") if m_best else None
+    cands = []
+    if m_out and m_out["valid"] and out_wns is not None:
+        cands.append((out_wns, "output"))
+    if m_best and m_best["valid"] and best_wns is not None:
+        cands.append((best_wns, "banked_best"))
+    final_wns, final_from = max(cands) if cands else (in_wns, "input")
     r.update(kb=kb, dcp=str(dcp), bundle=str(bundle) if bundle else None, model=model,
              budget_s=budget_s, secs=round(time.time() - t0, 1), exit_code=res.exit_code,
              timed_out=res.timed_out, output_exists=output_dcp.exists(),
              input_wns=in_wns, output_wns=out_wns, output_valid=bool(m_out and m_out["valid"]),
-             # what ships: a valid output, else the untouched input
-             final_wns=out_wns if (m_out and m_out["valid"]) else in_wns,
-             valid=bool(m_out and m_out["valid"]),
+             banked_best_wns=best_wns, banked_best_valid=bool(m_best and m_best["valid"]),
+             # what ships: the better valid one of output and banked best, else the input
+             final_wns=final_wns, final_from=final_from,
+             valid=bool(cands),
              output_dcp=str(output_dcp), run_dir=str(run_dir), log=str(log))
     r["d_wns"] = (round(r["final_wns"] - in_wns, 4)
                   if r["final_wns"] is not None and in_wns is not None else None)
@@ -142,12 +157,14 @@ def main(argv=None):
     ap.add_argument("--key-env", default="OPENROUTER_API_KEY")
     ap.add_argument("--base-url", default=None)
     ap.add_argument("--python", default=None)
+    ap.add_argument("--step-timeout-s", type=float, default=900,
+                    help="longest one Vivado command / analysis step may run (0 = no limit)")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
     if a.dry_run:
         r = dry_run(a.bundle, a.dcp, a.out, a.kb, python=a.python)
     else:
-        r = run(a.bundle, a.dcp, a.out, a.kb, a.budget_s, a.model, key_env=a.key_env,
+        r = run(a.bundle, a.dcp, a.out, a.kb, a.budget_s, a.model, key_env=a.key_env, step_timeout_s=a.step_timeout_s,
                 base_url=a.base_url, python=a.python)
     print(json.dumps(r, indent=2))
 

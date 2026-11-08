@@ -34,7 +34,7 @@ from .vivado import _run_in_slot, est_mem_gb, reap_under, vivado_slot
 PACT_DIR = REPO / "consumers" / "pact"
 PACT_PYTHON = os.environ.get(
     "PACT_PYTHON",
-    "/mnt/vault1/kmhatre/workspace/FPL_26_contest_asu/contest_winners/4_Fu_Do_Fdo/.venv/bin/python")
+    "/scratch/kmhatre/workspace/dac/tools/PACT/.venv/bin/python")
 JAVA11 = "/usr/lib/jvm/java-11-openjdk-amd64"
 KB_VARIANTS = ("none", "hand", "pramana")
 GRACE_S = 900
@@ -115,7 +115,7 @@ def parse_run(run_dir: Path) -> dict:
                  rounds=m.get("round"), cost_usd=bud.get("tokens_spent"),
                  pact_elapsed_s=bud.get("time_elapsed"), attempts=len(hist),
                  accepted=sum(1 for h in hist if h.get("accepted") is True),
-                 clock_period_ns=cb.get("clock_period") or bl.get("clock_period"),
+                 clock_period_ns=bl.get("clock_period") or cb.get("clock_period"),  # cb may hold a retimed period
                  learned_prior_present=bool(m.get("learned_prior")))
     return r
 

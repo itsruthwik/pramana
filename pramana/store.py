@@ -3,6 +3,7 @@
 Done once and shared by every campaign (training or evaluation):
   specs/vivado_<ver>/<part>/space.json      probed search space   (committed)
   specs/vivado_<ver>/<part>/probe*.json     probe evidence         (committed)
+  store/dcp/<id>-<md5>/vivado_<ver>/input/    input check: part, md5, input metrics (S2 or S1)
   store/dcp/<id>-<md5>/vivado_<ver>/profile/  reports, paths, features (one dir per DCP)
   store/vivado_<ver>/t<threads>/results.jsonl reference (baseline) runs, records carry dcp_md5
 Campaigns only own the work that depends on their choices (prune .. compile).
@@ -24,6 +25,11 @@ def dcp_key(d: dict) -> str:
 
 def profile_dir(cfg: Config, d: dict) -> Path:
     return STORE / "dcp" / dcp_key(d) / f"vivado_{cfg.vivado_version}" / "profile"
+
+
+def input_dir(cfg: Config, d: dict) -> Path:
+    """Input check of one DCP (part, md5, input metrics); written by S2 or S1, see inputs.py."""
+    return STORE / "dcp" / dcp_key(d) / f"vivado_{cfg.vivado_version}" / "input"
 
 
 def runs_root(cfg: Config) -> Path:

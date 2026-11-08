@@ -487,7 +487,7 @@ xsim fc_snap -R > xsim.out 2>&1
 
 def _run_sims(jobs: list[tuple[Path, str]], timeout_s: float, need_gb: float) -> list[tuple[int, float]]:
     """Run bash scripts one after the other while holding one machine-wide Vivado slot."""
-    slot = vivado._acquire_slot()
+    slot, _ = vivado._acquire_slot()        # local slot: xsim runs here
     res = []
     try:
         vivado.wait_for_memory(need_gb)

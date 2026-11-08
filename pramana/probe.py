@@ -11,7 +11,7 @@ import json
 import re
 from pathlib import Path
 
-from . import space
+from . import inputs, space
 from .campaign import Campaign
 
 
@@ -43,6 +43,7 @@ def run(c: Campaign, log=print) -> dict:
         log("probe: already applied")
         return {}
     d = min(c.designs(), key=lambda x: x["dcp_mb"])
+    inputs.check(c.cfg, d)            # start WNS without depending on S1 profile
     st = c.input_state(d["id"])
     steps = probe_steps(spec)
     jobs = [c.job(d["id"], st, [s], "probe") for s in steps]
@@ -82,6 +83,7 @@ def run_postroute(c: Campaign, log=print) -> dict:
     """Which phys_opt options Vivado accepts on a ROUTED design (unsupported ones fail in <1 s)."""
     spec = c.spec()
     d = min(c.designs(), key=lambda x: x["dcp_mb"])
+    inputs.check(c.cfg, d)
     st = c.input_state(d["id"])
     opts = [k for k, o in spec["commands"]["phys_opt"]["options"].items() if o["type"] == "switch"]
     jobs = [c.job(d["id"], st, [{"cmd": "phys_opt", "opts": {k: True}}], "probe") for k in opts]

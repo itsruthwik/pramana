@@ -2,14 +2,10 @@
 from __future__ import annotations
 
 import json
-import re
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
-from . import tcl
+from . import inputs, tcl
 from .config import Config
-from .corpus import md5
-from .runner import parse_stdout
 from .store import profile_dir
 from .vivado import est_mem_gb, run_vivado
 
@@ -47,19 +43,24 @@ def profile_design(cfg: Config, d: dict) -> dict:
     out = profile_dir(cfg, d)
     out.mkdir(parents=True, exist_ok=True)
     if (out / "profile.json").exists():
-        return json.loads((out / "profile.json").read_text())
+        prof = json.loads((out / "profile.json").read_text())
+        if inputs.load(cfg, d) is None:      # profiles made before the input check existed
+            inputs.save(cfg, d, {"id": d["id"], "md5": d["md5"], "status": prof["status"],
+                                 "input": prof["input"], "part": prof["part"],
+                                 "n_slr": prof["n_slr"], "dcp_unchanged": prof["dcp_unchanged"],
+                                 "secs": prof.get("profile_secs"), "source": "profile"})
+        return prof
     (out / "profile.tcl").write_text(profile_script(d["path"], out, cfg.threads))
     vr = run_vivado(out / "profile.tcl", out, cfg.vivado_settings, cfg.run_timeout_s,
                     need_gb=cfg.min_free_mem_gb + est_mem_gb(d["dcp_mb"]))
     (out / "stdout.txt").write_text(vr.stdout)
-    parsed = parse_stdout(vr.stdout, vr.exit_code, vr.timed_out)
-    part = re.search(r"^PART (\S+)", vr.stdout, re.M)
-    nslr = re.search(r"^N_SLR (\d+)", vr.stdout, re.M)
-    prof = {"id": d["id"], "status": parsed["status"], "input": parsed["result"],
-            "part": part.group(1) if part else None,
-            "n_slr": int(nslr.group(1)) if nslr else None,
-            "profile_secs": round(vr.wall_s, 1),
-            "dcp_unchanged": md5(Path(d["path"])) == d["md5"]}
+    rec = inputs.record(d, vr.stdout, vr.exit_code, vr.timed_out, vr.wall_s, "profile")
+    # the same measurement S2 needs: publish it as the input check unless one exists
+    if inputs.load(cfg, d) is None:
+        inputs.save(cfg, d, rec)
+    prof = {"id": d["id"], "status": rec["status"], "input": rec["input"],
+            "part": rec["part"], "n_slr": rec["n_slr"], "profile_secs": rec["secs"],
+            "dcp_unchanged": rec["dcp_unchanged"]}
     (out / "profile.json").write_text(json.dumps(prof, indent=1))
     return prof
 
@@ -71,14 +72,9 @@ def profile_all(cfg: Config, designs: list[dict], log=print) -> list[dict]:
         inp = p.get("input") or {}
         log(f"[profile] {p['id']:28s} {p['status']} part={p['part']} wns={inp.get('wns')} "
             f"whs={inp.get('whs')} clocks={len(inp.get('clocks') or [])} unchanged={p['dcp_unchanged']}")
-    # one part per campaign: designs on another part are excluded (recorded, not fatal)
-    other = [p for p in profs if p["part"] and p["part"] != cfg.part]
-    if other:
-        for p in other:
-            log(f"[profile] EXCLUDED {p['id']}: part {p['part']} != campaign part {cfg.part}")
-        keep = [d["id"] for d in designs if d["id"] not in {p["id"] for p in other}]
-        cfg.designs = keep
-        cfg.save()
-        (cfg.root / "excluded.json").write_text(json.dumps(
-            {p["id"]: f"part {p['part']}" for p in other}, indent=1))
-    return [p for p in profs if p not in other]
+    # one part per campaign: unusable designs are excluded (recorded, not fatal); the same
+    # rule S2 applies through its own input check (inputs.py)
+    keep = {r["id"] for r in inputs.exclude(cfg, [{**p, "md5": d["md5"], "secs": p["profile_secs"],
+                                                   "source": "profile"}
+                                                  for p, d in zip(profs, designs)], log, "profile")}
+    return [p for p in profs if p["id"] in keep]

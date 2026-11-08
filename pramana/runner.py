@@ -139,7 +139,8 @@ class Runner:
                               keep_min_wns=job.get("start_wns"), extra_tcl=job.get("extra_tcl", ""))
         (rdir / "run.tcl").write_text(script)
         t0 = time.time()
-        vr = run_vivado(rdir / "run.tcl", rdir, self.cfg.vivado_settings, self.cfg.run_timeout_s,
+        vr = run_vivado(rdir / "run.tcl", rdir, self.cfg.vivado_settings,
+                        job.get("timeout_s") or self.cfg.run_timeout_s,
                         need_gb=self.cfg.min_free_mem_gb + est_mem_gb(job.get("dcp_mb", 50)))
         (rdir / "stdout.txt").write_text(vr.stdout)
         parsed = parse_stdout(vr.stdout, vr.exit_code, vr.timed_out)

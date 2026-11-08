@@ -13,6 +13,7 @@ from pathlib import Path
 from . import flow, funccheck, profile as prof_mod, tcl
 from .campaign import Campaign
 from .config import REPO
+from .features import FEATURE_DOC
 from .space import chain_key, step_factors, step_key
 
 
@@ -119,6 +120,55 @@ def extra_actions(kb: dict, n: int = 6) -> list[dict]:
 
 
 # --------------------------------------------------------------------------- maya
+# Path-share features measured the way profile.py/features.py do (top-200 setup paths,
+# -nworst 1), so policy_auto can pick a strategy on the open design. Returns "" for a
+# feature with no Tcl measure here (policy_auto then runs both strategies).
+FEATURE_TCL = r"""
+proc ::pramana::feature {name {n 200}} {
+    if {$name eq "congestion_level"} {
+        # as pramana/features.py: highest congestion level in report_design_analysis -congestion
+        if {[catch {set r [report_design_analysis -congestion -return_string]}]} {return ""}
+        set lv 0
+        foreach {- l} [regexp -all -inline -line {^\|\s*\w+\s*\|\s*\w+\s*\|\s*(\d+)\s*\|} $r] {
+            if {$l > $lv} {set lv $l}
+        }
+        return $lv
+    }
+    set paths [get_timing_paths -quiet -setup -max_paths $n -nworst 1]
+    set tot [llength $paths]
+    if {$tot == 0} {return ""}
+    set hit 0
+    foreach p $paths {
+        set sr ""; set er ""
+        catch {set sr [get_property REF_NAME [get_cells -quiet -of_objects [get_property STARTPOINT_PIN $p]]]}
+        catch {set er [get_property REF_NAME [get_cells -quiet -of_objects [get_property ENDPOINT_PIN $p]]]}
+        switch -- $name {
+            carry_frac {
+                set refs [get_property REF_NAME [get_cells -quiet -of_objects $p]]
+                set h [expr {[lsearch -glob $refs *CARRY*] >= 0}]
+            }
+            hf_path_frac {
+                set h 0
+                foreach nt [get_nets -quiet -of_objects $p] {
+                    set f [get_property FLAT_PIN_COUNT $nt]
+                    if {$f ne "" && $f > 100} {set h 1; break}
+                }
+            }
+            end_bram_frac   {set h [string match RAMB* $er]}
+            end_dsp_frac    {set h [string match DSP* $er]}
+            end_uram_frac   {set h [string match URAM* $er]}
+            end_lutram_frac {set h [expr {[string match RAMD* $er] || [string match RAMS* $er] || [string match SRL* $er]}]}
+            start_bram_frac {set h [string match RAMB* $sr]}
+            start_dsp_frac  {set h [string match DSP* $sr]}
+            cross_clock_frac {set h [expr {[get_property STARTPOINT_CLOCK $p] ne [get_property ENDPOINT_CLOCK $p]}]}
+            default {return ""}
+        }
+        incr hit $h
+    }
+    return [format %.4f [expr {double($hit) / $tot}]]
+}
+"""
+
 KIB_TCL = r"""
 namespace eval ::pramana {}
 # Run a script; keep its result only if the design stays legal and WNS improves.
@@ -140,12 +190,29 @@ proc ::pramana::time_left {{need 0}} {
     if {![info exists ::pramana::deadline]} {return 1}
     return [expr {[clock seconds] + $need < $::pramana::deadline}]
 }
-proc ::pramana::keep_if_better {tag script {tmpdir /tmp} {need 0}} {
+# Time guards. ::pramana::deadline: end of the agent's budget. ::pramana::step_limit: the longest
+# one tool call may run (the agent's Vivado server stops a command after it). A policy proc calls
+# begin_call; a step is skipped unless its estimate (the previous step's duration, or `need`)
+# fits both. The first step of a call has no estimate and always runs.
+proc ::pramana::begin_call {} { set ::pramana::call_start [clock seconds]; set ::pramana::last_secs 0 }
+proc ::pramana::fits {tag {need 0}} {
+    if {[info exists ::pramana::last_secs] && $::pramana::last_secs > $need} {set need $::pramana::last_secs}
     if {![::pramana::time_left $need]} { puts "PRAMANA $tag skipped (does not fit the time left)"; return 0 }
+    if {[info exists ::pramana::step_limit] && $::pramana::step_limit > 0 && [info exists ::pramana::call_start]} {
+        if {[clock seconds] - $::pramana::call_start + $need > $::pramana::step_limit - 60} {
+            puts "PRAMANA $tag skipped (does not fit the $::pramana::step_limit s limit of one call)"; return 0
+        }
+    }
+    return 1
+}
+proc ::pramana::keep_if_better {tag script {tmpdir /tmp} {need 0}} {
+    if {![::pramana::fits $tag $need]} { return 0 }
+    set _t0 [clock seconds]
     set ck [file join $tmpdir "pramana_kib_[pid].dcp"]
     write_checkpoint -force $ck
     set before [::pramana::wns]
     if {[catch {uplevel #0 $script} err]} { puts "PRAMANA $tag error: $err" }
+    set ::pramana::last_secs [expr {[clock seconds] - $_t0}]
     if {![::pramana::legal]} { catch {route_design} }
     set after [::pramana::wns]
     if {![::pramana::legal] || $after <= $before} {
@@ -169,14 +236,33 @@ def recipes_tcl(kb: dict, b: dict) -> str:
         chains["low"], chains["high"] = b["low"], b["high"]
     for name, ch in chains.items():
         out.append(f"proc ::pramana::policy_{name} {{{{tmpdir /tmp}}}} {{")
+        out.append("    ::pramana::begin_call")
         for s in policy_steps(ch or [], kb):
             body = "; ".join(s["tcl"])
             if s["mode"] == "committed":
                 out.append(f"    # {s['name']} (committed: never regressed in training)")
-                out.append(f"    {body}")
+                out.append(f"    if {{[::pramana::fits {{{s['name']}}}]}} {{ set _t0 [clock seconds]; "
+                           f"{body}; set ::pramana::last_secs [expr {{[clock seconds] - $_t0}}] }}")
             else:
                 out.append(f"    ::pramana::keep_if_better {{{s['name']}}} {{{body}}} $tmpdir")
         out.append("}")
+    if b["type"] == "two":
+        out.append(FEATURE_TCL)
+        out.append(f"""# Two-strategy policy: measure {b['feature']} on the open design and run the matching one.
+proc ::pramana::policy_auto {{{{tmpdir /tmp}}}} {{
+    set v [::pramana::feature {b['feature']}]
+    if {{$v eq ""}} {{
+        puts "PRAMANA policy_auto: cannot measure {b['feature']} in Tcl; running both strategies"
+        ::pramana::policy_low $tmpdir; ::pramana::policy_high $tmpdir; return
+    }}
+    if {{$v <= {b['threshold']}}} {{
+        puts "PRAMANA policy_auto: {b['feature']}=$v <= {b['threshold']} -> policy_low"
+        ::pramana::policy_low $tmpdir
+    }} else {{
+        puts "PRAMANA policy_auto: {b['feature']}=$v > {b['threshold']} -> policy_high"
+        ::pramana::policy_high $tmpdir
+    }}
+}}""")
     for r in kb["recipes"]:
         if r.get("own_valid") and (r.get("own_d_wns") or 0) > 0 and r.get("usable", True):
             pname = _safe_name(f"recipe_{r['from_design']}_{r['name']}")
@@ -216,6 +302,10 @@ def context_md(kb: dict, b: dict) -> str:
                  f"(held-out families reached {b['lofo']:.0%} of best-known gain):")
         L.append(f"  {b['feature']} <= {b['threshold']}: " + " | then | ".join(chain_key(u) for u in b["low"] or []))
         L.append(f"  {b['feature']} > {b['threshold']}: " + " | then | ".join(chain_key(u) for u in b["high"] or []))
+        L.append(f"Tcl (in recipes.tcl): ::pramana::policy_auto measures {b['feature']} "
+                 f"({FEATURE_DOC.get(b['feature'], 'see features')}) on the open design and runs "
+                 f"::pramana::policy_low or ::pramana::policy_high; "
+                 f"::pramana::feature {b['feature']} returns the value alone.")
     bb = (kb["policies"].get("by_budget") or {}).get("budgets") or []
     if b["type"] == "one" and bb:
         L += ["", "### Strategy by time budget",

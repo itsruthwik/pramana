@@ -226,8 +226,10 @@ def _latch_card(fid: str, spec: dict, kb: dict, used_in_policy: dict[str, list[s
                 use.append(f"[{kind}] {f} {c['rule']} (held-out accuracy {c['lofo_acc']} vs "
                            f"{c['lofo_majority_acc']} baseline, grade {c.get('grade')})")
         if f in neg:
-            avoid.append(f"[{kind}] {f}: {neg[f]['why']} (cut on {neg[f]['cut_on']} designs)")
-            ev.setdefault(f, {"match": kind})["pruned_on_designs"] = neg[f]["cut_on"]
+            # pruned entries carry cut_on; measured ones carry a profile (see write_pact_cases)
+            cut = neg[f].get("cut_on", (neg[f].get("profile") or {}).get("n_designs"))
+            avoid.append(f"[{kind}] {f}: {neg[f]['why']} (cut on {cut} designs)")
+            ev.setdefault(f, {"match": kind})["pruned_on_designs"] = cut
         for pol in used_in_policy.get(f, []):
             use.append(f"[{kind}] {f} is a step of pramana's learned policy: {pol}")
     if spec["phys_opt"]:
@@ -463,7 +465,8 @@ def _pact_family_tcl(tcl: str) -> str:
 
 def _pact_bottleneck(factor: str, conds: dict, family: str) -> dict:
     ok = [c for c in conds.get(factor, []) if c["status"] == "condition"]
-    weak = [c for c in conds.get(factor, []) if c["status"] != "condition"]
+    # "no reliable condition" entries carry no feature/threshold: nothing to export
+    weak = [c for c in conds.get(factor, []) if c["status"] != "condition" and "feature" in c]
 
     def pred(c):
         return {"feature": c["feature"], "op": "<=" if c["side"] < 0 else ">",

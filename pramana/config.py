@@ -6,12 +6,14 @@ campaign runs with the same settings.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-VIVADO_SETTINGS = "/mnt/vault2/tools/AMD/2025.2/Vivado/settings64.sh"
+VIVADO_SETTINGS = os.environ.get("PRAMANA_VIVADO_SETTINGS",
+                                 "/scratch/kmhatre/2025.2/Vivado/settings64.sh")
 VIVADO_VERSION = "2025.2"
 
 
@@ -40,6 +42,9 @@ class Config:
     share_audit: float = 0.1
     noise_floor_ns: float = 0.005     # minimum; raised by measured repeat spread
     discover_trials: int = 6
+    # S6: transfer only this many best chains to other designs (0 = all); every design still
+    # replays its own best chain, and the S2 references are always kept
+    confirm_top_k: int = 0
     designs: list[str] = field(default_factory=list)   # restrict to these ids (empty = all)
     prior_kb: str = ""                # kb.json of an earlier campaign, shown to analysts as a prior
 

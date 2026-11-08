@@ -1,6 +1,6 @@
 """Run the perturbation noise jobs for given designs of a campaign; print the noise floors."""
 import sys
-from pramana import baseline
+from pramana import baseline_v1 as baseline   # noise chains live in the S2 backup
 from pramana.campaign import Campaign
 from pramana.config import Config
 

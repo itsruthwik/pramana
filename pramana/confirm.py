@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 from . import flow
 from .campaign import Campaign
@@ -50,11 +51,16 @@ def lineage_chain(c: Campaign, did: str, sid: str) -> list[dict]:
     return flatten(lineage_units(c, did, sid))
 
 
-def policies(c: Campaign) -> dict[str, dict]:
+# S6's own runs never define a design's best chain: otherwise a transfer or recipe run that
+# improves a design changes the policy set, and every resume of S6 transfers new chains.
+CONFIRM_PURPOSES = frozenset({"replay", "transfer", "recipe_repeat", "recipe_transfer"})
+
+
+def policies(c: Campaign, before: str | None = None) -> dict[str, dict]:
     """Distinct best chains across designs: key -> {chain, from_designs}."""
     out: dict[str, dict] = {}
     for d in c.designs():
-        best = c.best_state(d["id"])
+        best = c.best_state(d["id"], skip_purposes=CONFIRM_PURPOSES, before=before)
         if best["id"] == "input":
             continue
         units = lineage_units(c, d["id"], best["id"])
@@ -68,14 +74,78 @@ def policies(c: Campaign) -> dict[str, dict]:
     return out
 
 
+def select_transfer(c: Campaign, pols: dict[str, dict], k: int) -> set[str]:
+    """The best-chain policies worth transferring: all if k <= 0, else k of them. Score = the
+    source design's own gain relative to its input slack (|input WNS|, at least 0.1 ns), so
+    small and large designs compare; one chain per family first, then by score."""
+    best = [x for x in pols if not pols[x].get("baseline")]
+    if k <= 0 or len(best) <= k:
+        return set(best)
+    fam = {d["id"]: d["family"] for d in c.designs()}
+
+    def score(key: str) -> float:
+        out = []
+        for did in pols[key]["from_designs"]:
+            inp = c.input_wns(did)
+            out.append((c.best_state(did)["wns"] - inp) / max(abs(inp), 0.1))
+        return max(out or [0.0])
+    ranked = sorted(best, key=score, reverse=True)
+    chosen, seen = [], set()
+    for key in ranked:                       # one per family first
+        f = {fam.get(d) for d in pols[key]["from_designs"]}
+        if not (f & seen):
+            chosen.append(key)
+            seen |= f
+        if len(chosen) == k:
+            break
+    for key in ranked:                       # then the best remaining
+        if len(chosen) == k:
+            break
+        if key not in chosen:
+            chosen.append(key)
+    return set(chosen)
+
+
 def run(c: Campaign, log=print) -> None:
-    pols = policies(c)
+    frozen = c.root / "policies.frozen.json"
+    state_f = c.root / "confirm_state.json"
+    # where recipe transfers start (each design's best state): fixed when S6 first starts, so
+    # a resumed S6 does not start them from states that S6 itself improved
+    if state_f.exists():
+        cst = json.loads(state_f.read_text())
+    else:
+        cst = {"as_of": time.strftime("%Y-%m-%d %H:%M:%S"), "skip_confirm": True}
+        state_f.write_text(json.dumps(cst, indent=1))
+    skip = CONFIRM_PURPOSES if cst.get("skip_confirm", True) else frozenset()
+
+    def start_of(did: str) -> dict:
+        return c.best_state(did, skip_purposes=skip, before=cst["as_of"])
+    if frozen.exists():
+        # a resumed S6 runs the same policy set as the run it continues
+        pols = json.loads(frozen.read_text())
+        designs = {d["id"] for d in c.designs()}
+        for p in pols.values():
+            p["from_designs"] = [x for x in p["from_designs"] if x in designs]
+        pols = {k: p for k, p in pols.items() if p["from_designs"] or p.get("baseline")}
+        log(f"[confirm] using frozen policy set {frozen.name}")
+    else:
+        pols = policies(c)
+        keep = select_transfer(c, pols, getattr(c.cfg, "confirm_top_k", 0))
+        for key in pols:
+            pols[key]["transferred"] = bool(pols[key].get("baseline")) or key in keep
+        frozen.write_text(json.dumps(pols, indent=1))
     (c.root / "policies.json").write_text(json.dumps(pols, indent=1))
+    n_best = sum(1 for p in pols.values() if not p.get("baseline"))
+    n_tr = sum(1 for p in pols.values() if not p.get("baseline") and p.get("transferred"))
+    log(f"[confirm] transferring {n_tr} of {n_best} best chains "
+        f"(confirm_top_k={getattr(c.cfg, 'confirm_top_k', 0)}) + {len(pols) - n_best} references")
     jobs = []
     for d in c.designs():
         inp = c.input_state(d["id"])
         for k, p in pols.items():
             purpose = "replay" if d["id"] in p["from_designs"] else "transfer"
+            if purpose == "transfer" and not p["transferred"]:
+                continue
             jobs.append(c.job(d["id"], inp, p["chain"], purpose, tag=k[:60]))
     # discovered general recipes -> other designs' best states
     for d in c.designs():
@@ -103,8 +173,16 @@ def run(c: Campaign, log=print) -> None:
                         (c.root / "discover" / d["id"] / "meta.json").read_text())["start"]),
                         [], "recipe_repeat", tag=f"{d['id']}:{cd['name']}", extra_tcl=tcl, rep=1))
                 else:
-                    jobs.append(c.job(o["id"], c.best_state(o["id"]), [], "recipe_transfer",
+                    jobs.append(c.job(o["id"], start_of(o["id"]), [], "recipe_transfer",
                                       tag=f"{d['id']}:{cd['name']}", extra_tcl=tcl))
+    # a run that already hit the run timeout is not repeated: its result is "does not finish"
+    from .runner import run_id
+    timed_out = {r["run_id"] for r in c.runner.load() if r["status"] == "timeout"}
+    n0 = len(jobs)
+    jobs = [j for j in jobs if run_id(j["design"], j["start"], j["chain"], j.get("rep", 0),
+                                      j.get("extra_tcl", "")) not in timed_out]
+    if n0 - len(jobs):
+        log(f"[confirm] {n0 - len(jobs)} runs timed out before; not repeated")
     jobs.sort(key=lambda j: j["dcp_mb"])
     c.runner.run_many(jobs, log=log)
     log(f"[confirm] {len(pols)} policies x {len(c.designs())} designs; recipes transferred")

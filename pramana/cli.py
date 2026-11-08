@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 import json
 import sys
 import time
@@ -42,7 +43,12 @@ def cmd_init(a) -> None:
     cfg = Config(name=a.campaign, workers=a.workers, threads=a.threads,
                  designs=a.designs.split(",") if a.designs else [])
     cfg.save()
-    ds = corpus.register(only=cfg.designs or None)
+    if a.dcp_list:      # exactly the DCPs in the list (e.g. dataset/split_train.csv)
+        ds = corpus.register_list(Path(a.dcp_list))
+        if cfg.designs:
+            ds = [d for d in ds if d["id"] in cfg.designs]
+    else:
+        ds = corpus.register(only=cfg.designs or None)
     corpus.save(ds, cfg.root)
     print(f"campaign {cfg.name}: {len(ds)} designs -> {cfg.root}")
     for d in ds:
@@ -113,6 +119,7 @@ def main(argv=None) -> None:
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--threads", type=int, default=4)
     ap.add_argument("--from", dest="from_stage", default=None)
+    ap.add_argument("--dcp-list", default="", help="init: CSV with a `path` column (and `source`)")
     a = ap.parse_args(argv)
     if a.command == "init":
         return cmd_init(a)
