@@ -170,14 +170,17 @@ class Runner:
         return rec
 
     def run_many(self, jobs: list[dict], log=print) -> list[dict]:
+        self._hist = None               # fresh history for this batch's ordering
         done = self.done_ids()
         todo = []
         for j in jobs:
             rid = run_id(j["design"], j["start"], j["chain"], j.get("rep", 0), j.get("extra_tcl", ""))
             if rid not in done:
                 todo.append(j)
+        # longest first, so the slow runs start early instead of forming the stage's tail
+        todo.sort(key=self.expected_s, reverse=True)
         log(f"[runner] {len(todo)} runs to do ({len(jobs) - len(todo)} already done), "
-            f"{self.cfg.workers} workers")
+            f"{self.cfg.workers} workers, longest first")
         out = []
         with ThreadPoolExecutor(self.cfg.workers) as ex:
             futs = [ex.submit(self._safe_run, j) for j in todo]
@@ -188,6 +191,26 @@ class Runner:
                         f"dWNS={rec['d_wns']} t={rec['wall_s']}s  {rec['chain_key'][:90]}")
                     out.append(rec)
         return out
+
+    def expected_s(self, job: dict) -> float:
+        """Rough run time for ordering: the median wall time of this design's finished runs
+        (this campaign and the store), times the chain length relative to their mean; with no
+        history, the DCP size stands in."""
+        hist = self.__dict__.get("_hist")
+        if hist is None:
+            hist = {}
+            rows = self.load() + (self.history() if getattr(self, "history", None) else [])
+            for r in rows:
+                if r.get("status") == "ok" and r.get("wall_s"):
+                    hist.setdefault(r["design"], []).append((r["wall_s"], max(1, len(r["chain"]))))
+            self._hist = hist
+        h = hist.get(job["design"])
+        n = max(1, len(job["chain"])) + (1 if job.get("extra_tcl") else 0)
+        if not h:
+            return 60.0 * (job.get("dcp_mb") or 50) * n
+        walls = sorted(w for w, _ in h)
+        mean_len = sum(k for _, k in h) / len(h)
+        return walls[len(walls) // 2] * n / mean_len
 
     def _safe_run(self, job):
         try:

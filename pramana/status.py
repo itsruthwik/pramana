@@ -29,5 +29,7 @@ def text(c: Campaign) -> str:
         st = json.loads(sp.read_text())
         L.append(f"search: round {st['round']}, LLM weight {st['llm_weight']:.2f}, "
                  f"stopped {st['stopped']}")
-    L.append(f"LLM spend: {json.dumps(llm.spend(c.cfg))}")
+    L.append(llm.spend_line(c.cfg))
+    from .cli import time_line
+    L.append(time_line(c.cfg))
     return "\n".join(L)

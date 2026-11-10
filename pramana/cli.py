@@ -107,6 +107,27 @@ def stage(name: str, cfg: Config, log) -> None:
     if name in ("prune", "search", "discover", "distill"):   # the stages that call the LLM
         from . import llm
         log(llm.spend_line(cfg))
+    if name == "compile":
+        log(time_line(cfg))
+
+
+def time_line(cfg: Config) -> str:
+    """Training wall time: this campaign's stages (from its log) plus profile/baseline work
+    reused from an imported store, which this campaign did not have to run."""
+    import re
+    from . import store
+    own: dict = {}
+    logf = cfg.root / "pramana.log"
+    if logf.exists():
+        for m in re.finditer(r"=== (\w+) done in (\d+)s ===", logf.read_text(errors="replace")):
+            own[m.group(1)] = own.get(m.group(1), 0) + int(m.group(2))
+    ids = [d["id"] for d in json.loads((cfg.root / "designs.json").read_text())]
+    reused, srcs = store.reused_prepare_s(ids)
+    t = sum(own.values())
+    h = lambda s: f"{s / 3600:.2f} h"
+    return (f"[time] training wall {h(t + reused)} = this campaign {h(t)} "
+            f"({', '.join(f'{k} {h(v)}' for k, v in own.items() if v >= 60)})"
+            + (f" + reused prepare {h(reused)} (profile+baseline from {', '.join(srcs)})" if reused else ""))
 
 
 PREPARE = ["space", "profile", "probe", "baseline"]   # framework-level, done once per DCP

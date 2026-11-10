@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import json
 from pathlib import Path
 
 from .config import REPO, Config
@@ -30,6 +31,23 @@ def profile_dir(cfg: Config, d: dict) -> Path:
 def input_dir(cfg: Config, d: dict) -> Path:
     """Input check of one DCP (part, md5, input metrics); written by S2 or S1, see inputs.py."""
     return STORE / "dcp" / dcp_key(d) / f"vivado_{cfg.vivado_version}" / "input"
+
+
+def reused_prepare_s(design_ids: list[str]) -> tuple[float, list[str]]:
+    """Wall seconds of profile+baseline work imported from another store (scripts/
+    import_store.py) that these designs reuse, and the sources. An import's wall time is
+    shared out by each design's share of its Vivado seconds."""
+    p = STORE / "imported.json"
+    if not p.exists():
+        return 0.0, []
+    total, srcs = 0.0, []
+    for imp in json.loads(p.read_text()).get("imports", []):
+        vs = imp.get("vivado_s") or {}
+        mine = sum(v for k, v in vs.items() if k in design_ids)
+        if mine and sum(vs.values()):
+            total += (imp.get("profile_wall_s", 0) + imp.get("baseline_wall_s", 0)) * mine / sum(vs.values())
+            srcs.append(imp.get("source_log") or imp.get("source"))
+    return total, srcs
 
 
 def runs_root(cfg: Config) -> Path:

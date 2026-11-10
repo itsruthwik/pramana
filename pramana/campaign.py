@@ -20,6 +20,7 @@ class Campaign:
         # a campaign run identical to a reference run (same design, start, chain) is not
         # re-run; results() returns the reference record for it
         self.runner.also_done = self.store_runner.done_ids
+        self.runner.history = self.store_runner.load     # run-time history for ordering
 
     # ---------------------------------------------------------------- designs
     def designs(self) -> list[dict]:
