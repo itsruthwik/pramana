@@ -334,6 +334,80 @@ def run_print(cfg: Config, stage: str, name: str, task: str, cwd: Path, schema: 
             "structured_output": so, "cwd": str(cwd)}
 
 
+AGENT_SYSTEM = ("You are an expert in AMD Vivado timing closure working in a Linux shell. Use "
+                "the tools to act; keep your messages short. Follow the task file exactly.")
+
+
+def run_print_agent(cfg: Config, stage: str, name: str, task: str, cwd: Path,
+                    done: Callable[[], str | None], key: str | None = None,
+                    tools: list[str] = AGENT_TOOLS, timeout_s: float = 4 * 3600,
+                    max_nudges: int = 3, task_file: str = "task.md",
+                    model: str | None = None) -> dict:
+    """An agent through `claude -p` (print mode) with tools, inside tmux: runs until the model
+    stops; if the deliverable is missing it is resumed with what is wrong (up to max_nudges).
+    Our short system prompt replaces Claude Code's. Usage is the transcript's growth over this
+    call, as in run()."""
+    model = model or cfg.llm_model
+    cwd = Path(cwd).resolve()
+    cwd.mkdir(parents=True, exist_ok=True)
+    (cwd / task_file).write_text(task)
+    store = SessionStore(cfg)
+    sid = store.get(key) if key else None
+    resume = sid is not None and not sid.startswith(CODEX) and transcript(sid) is not None
+    before = usage(sid) if resume else {k: 0 for k in USAGE_KEYS}
+    if not resume:
+        sid = str(uuid.uuid4())
+        if key:
+            store.put(key, sid)
+    tname = re.sub(r"[^A-Za-z0-9_-]", "_", f"pr-{cfg.name}-{stage}-{name}")[:80]
+    log = cwd / f"{Path(task_file).stem}.print.jsonl"
+    t0 = time.time()
+
+    def call(prompt: str, first: bool) -> bool:
+        """One claude -p run; True if it hit the time limit."""
+        cmd = ["claude", "-p", "--model", model, "--effort", cfg.llm_effort,
+               "--tools", ",".join(tools), "--allowedTools", *tools, "--strict-mcp-config",
+               "--output-format", "json", "--system-prompt", AGENT_SYSTEM]
+        cmd += ["--session-id", sid] if first and not resume else ["--resume", sid]
+        cmd.append(prompt)
+        if _alive(tname):
+            _tmux("kill-session", "-t", tname)
+        shell = " ".join(_q(x) for x in cmd) + f" < /dev/null >> {_q(log.name)} 2>&1"
+        _tmux("new-session", "-d", "-s", tname, "-c", str(cwd), shell, check=True)
+        pid = _tmux("display-message", "-p", "-t", tname, "#{pane_pid}").stdout.strip()
+        while _alive(tname) and time.time() - t0 < timeout_s:
+            time.sleep(5)
+        if not _alive(tname):
+            return False
+        if pid.isdigit():
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                try:
+                    os.killpg(int(pid), sig)
+                except ProcessLookupError:
+                    break
+                time.sleep(20 if sig == signal.SIGTERM else 0)
+        _tmux("kill-session", "-t", tname)
+        return True
+
+    timed_out = call(f"Read {task_file} in the current directory and follow its instructions.",
+                     first=True)
+    why = done()
+    nudges = 0
+    while why and not timed_out and nudges < max_nudges and time.time() - t0 < timeout_s - 60:
+        nudges += 1
+        timed_out = call(f"Your deliverable is not complete yet: {why} Please finish it now.",
+                         first=False)
+        why = done()
+    status = "ok" if why is None else ("timeout" if timed_out else "exited")
+    rec = {"stage": stage, "name": name, "session_id": sid, "tmux": tname, "resumed": resume,
+           "status": status, "problem": why, "nudges": nudges, "model": model,
+           "effort": cfg.llm_effort, "mode": "print", "duration_s": round(time.time() - t0, 1),
+           "usage": {k: v - before.get(k, 0) for k, v in usage(sid).items()},
+           "usage_per_call": True, "cwd": str(cwd)}
+    (cwd / f"{Path(task_file).stem}.session.json").write_text(json.dumps(rec, indent=1))
+    return rec
+
+
 def _parse_json(text: str):
     """The JSON object in a reply (tolerates a code fence or text around it), or None."""
     t = text.strip()

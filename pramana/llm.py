@@ -164,9 +164,15 @@ def agent(cfg: Config, stage: str, name: str, prompt: str, cwd: Path,
             return f"{deliverable} is not valid JSON ({e})."
         return None
 
-    rec = session.run(cfg, stage, name, prompt, cwd, done, key=key or f"{stage}_{name}",
-                      tools=session.AGENT_TOOLS, timeout_s=timeout_s, idle_nudge_s=900,
-                      task_file="task.md")
+    m = cfg.llm_model
+    if cfg.claude_print and not m.startswith(session.CODEX):
+        rec = session.run_print_agent(cfg, stage, name, prompt, cwd, done,
+                                      key=key or f"{stage}_{name}", timeout_s=timeout_s,
+                                      task_file="task.md")
+    else:
+        rec = session.run(cfg, stage, name, prompt, cwd, done, key=key or f"{stage}_{name}",
+                          tools=session.AGENT_TOOLS, timeout_s=timeout_s, idle_nudge_s=900,
+                          task_file="task.md")
     rec["num_turns"] = rec["usage"]["assistant_turns"]
     rec["is_error"] = rec["status"] != "ok"
     _sfx(base, ".response.json").write_text(json.dumps(rec, indent=1))
