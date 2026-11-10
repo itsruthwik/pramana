@@ -8,3 +8,4 @@ campaigns
 store
 consumers/pact/
 dcp_database
+slurm/logs/
