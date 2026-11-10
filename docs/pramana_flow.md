@@ -7,17 +7,35 @@ and who reads them, and whether an LLM is involved.
 Conventions used below:
 
 - `store/` is shared across campaigns and keyed by DCP md5 or (Vivado version, threads).
-  `campaigns/<name>/` (written `C/` below) belongs to one campaign.
+  `campaigns/<name>/` (written `C/` below) belongs to one campaign. On the cluster `store/`
+  is a symlink to `/scratch` (it holds baseline checkpoints). `scripts/import_store.py` copies
+  profile, input check and baseline runs for a DCP list from another store and records that
+  work's wall time in `store/imported.json`; the training-time line adds it back (below).
 - Every Vivado run except profile and funccheck is built by `pramana/tcl.py` and launched
   by `pramana/runner.py`: open the start checkpoint, set threads, run each step in a
   `STEP_BEGIN` block, append `route_design` if not routed, measure (timing summary, route
   status, pulse width), write a checkpoint only if WNS improved. Each run gets a directory
   with `run.tcl`, `vivado.log`, `vivado.jou`, `stdout.txt`, `timing_summary.txt`,
   `paths.tsv`, and one row in a `results.jsonl`.
-- LLM calls are regular Claude Code sessions in tmux (`pramana/session.py`), or Codex
-  (`codex exec --json`, headless) when the model id is `codex:<model>`, e.g.
-  `codex:gpt-6.1-terra` in `llm_model` or `analysts`; resumed sessions work the same way. Each call logs
-  its prompt and a response record under `C/llm/<stage>/`.
+- LLM calls run in tmux sessions named `pr-<campaign>-<stage>-<name>` (`pramana/session.py`),
+  in one of three modes:
+  - **Claude interactive** (default): a regular `claude` session; the task is a file it
+    reads, the answer a file it writes.
+  - **Claude print** (`claude_print: true`): `claude -p` with our short system prompt instead
+    of Claude Code's. Structured answers (analyst, critic, notes) have no tools; the JSON
+    schema is in the prompt and the reply is parsed (not `--json-schema`, whose per-schema
+    tool would break the cache shared by the analyst and its critic turn). The discover
+    agent gets Bash/Read/Write/Edit and is resumed with a nudge if it stops early. About
+    half the LLM cost of interactive mode on the sample runs.
+  - **Codex** (model id `codex:<model>`, e.g. `codex:gpt-6.1-terra`, in `llm_model` or
+    `analysts`): `codex exec --json`, sandbox off (`codex_sandbox`, its own sandbox fails
+    in Slurm jobs), the system prompt at the top of the task.
+  Resumed sessions work the same way in every mode. Each call logs its prompt and a response
+  record (status, per-call token usage) under `C/llm/<stage>/`.
+- After each LLM stage `C/pramana.log` gets an `[llm] spend so far` line: calls and tokens per
+  stage and an estimated cost at API list prices (Claude cache writes at the 1-hour rate).
+  After compile it gets a `[time] training wall` line: this campaign's stage times plus any
+  profile/baseline work reused from an imported store. `pramana status` shows both.
 - The log for every stage is `C/pramana.log` (UTC). Each stage prints `=== name ===` and
   `=== name done in Ns ===`.
 
@@ -50,6 +68,8 @@ probe, profile and baseline are the framework layer (`pramana prepare`): work al
 S0 probe, S1, S2, S4, S5 (through the trial runner), S6 (runs and funccheck xsim), evaluate.
 At most 4 concurrent Vivado processes machine-wide (`PRAMANA_MAX_VIVADO`), 4 threads each,
 gated on free memory, 4 h timeout, one retry on crash. Crashes are never counted as results.
+Each batch of runs starts longest first (expected time: the design's median run time,
+scaled by chain length), so slow runs do not form the stage's tail.
 
 ## Where the LLM runs
 
@@ -57,6 +77,19 @@ S3 (analyst, critic), S4 (analyst re-prune and critic, when something changed), 
 S7 (note writer). No number in `kb.json` comes from an LLM. The analyst's influence on run
 selection is weighted by its measured prediction accuracy; the critic can only remove runs,
 never add them; the agent can only submit Tcl through the budgeted trial runner.
+
+## Incremental training
+
+`python -m pramana.incremental <c> --dcp-list <csv> --step 10 [--batches N]` grows one
+campaign a batch at a time: it adds the next `step` designs, resets S6's frozen policy set
+(old files kept as `*.n<k>`), runs every stage (done work is skipped: old designs are not
+pruned, searched or given discover again; confirm runs only new design x policy pairs), and
+copies `kb/kb.json` and `out/` to `C/snapshots/n<designs>/`. `--batches N` stops after N
+batches; the same command continues. `C/incremental.json` records each batch's designs,
+hours, cumulative LLM cost and training-time line. Evaluate a snapshot with
+`python -m pramana.evaluate <c> <eval> 3000 C/snapshots/n10/out/mithya`.
+`kb.json` changes only at distill (end of a batch); the analysts' draft KB
+(`evidence.kb_brief`) is recomputed from all other designs' runs at every prune.
 
 ## Campaign files that are not stage outputs
 
@@ -66,3 +99,4 @@ never add them; the agent can only submit Tcl through the budgeted trial runner.
 | `C/designs.json` | `pramana init` (scan of DCP source dirs) | every stage (design list, md5, family) |
 | `C/pramana.log` | every stage | humans |
 | `C/llm/sessions.json` | `pramana/session.py` | session resume across rounds |
+| `C/incremental.json`, `C/snapshots/n<k>/` | `pramana.incremental` | humans, evaluate |
