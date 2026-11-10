@@ -274,14 +274,18 @@ def run_print(cfg: Config, stage: str, name: str, task: str, cwd: Path, schema: 
               key: str | None = None, system: str | None = None, timeout_s: float = 1800,
               model: str | None = None) -> dict:
     """One structured answer from `claude -p` (print mode), run inside tmux like the others:
-    no tools, `system` as the whole system prompt, --json-schema for the answer, resumes the
-    session of `key`. Returns a record with `structured_output` (None on failure), per-call
+    no tools, `system` as the whole system prompt, resumes the session of `key`. The schema
+    goes in the prompt and the reply is parsed as JSON, NOT --json-schema: that flag adds a
+    per-schema tool, and tools head the cached prefix, so the analyst and its critic turn
+    (different schemas) would not share the cache. Returns a record with `structured_output` (None on failure), per-call
     usage and Claude's own cost figure."""
     model = model or cfg.llm_model
     cwd = Path(cwd).resolve()
     cwd.mkdir(parents=True, exist_ok=True)
     stem = Path(name).name
-    (cwd / f"{stem}_task.md").write_text(task)
+    (cwd / f"{stem}_task.md").write_text(
+        task + "\n\n## Output\nReply with ONE JSON object and nothing else (no prose, no code "
+        f"fence). It must validate against this JSON schema:\n{json.dumps(schema)}")
     out = cwd / f"{stem}.print.json"
     out.unlink(missing_ok=True)
     store = SessionStore(cfg)
@@ -292,8 +296,7 @@ def run_print(cfg: Config, stage: str, name: str, task: str, cwd: Path, schema: 
         if key:
             store.put(key, sid)
     cmd = ["claude", "-p", "--model", model, "--effort", cfg.llm_effort, "--tools", "",
-           "--strict-mcp-config", "--output-format", "json", "--json-schema", json.dumps(schema),
-           "--system-prompt", system or "You are a careful expert. Answer only from the given material."]
+           "--strict-mcp-config", "--output-format", "json", "--system-prompt", system or "You are a careful expert. Answer only from the given material."]
     cmd += ["--resume", sid] if resume else ["--session-id", sid]
     tname = re.sub(r"[^A-Za-z0-9_-]", "_", f"pr-{cfg.name}-{stage}-{name}")[:80]
     if _alive(tname):
@@ -313,7 +316,7 @@ def run_print(cfg: Config, stage: str, name: str, task: str, cwd: Path, schema: 
     except (OSError, json.JSONDecodeError):
         status = status if status != "ok" else "bad_output"
     u = res.get("usage") or {}
-    so = res.get("structured_output")
+    so = _parse_json(res.get("result") or "")
     if status == "ok" and (res.get("is_error") or so is None):
         status = "error"
     return {"stage": stage, "name": name, "session_id": sid, "tmux": tname, "resumed": resume,
@@ -329,6 +332,23 @@ def run_print(cfg: Config, stage: str, name: str, task: str, cwd: Path, schema: 
             # for reference only; spend() prices this call from its usage
             "usage_per_call": True, "session_cost_usd": res.get("total_cost_usd"),
             "structured_output": so, "cwd": str(cwd)}
+
+
+def _parse_json(text: str):
+    """The JSON object in a reply (tolerates a code fence or text around it), or None."""
+    t = text.strip()
+    if t.startswith("```"):
+        t = t.split("\n", 1)[-1].rsplit("```", 1)[0]
+    try:
+        return json.loads(t)
+    except json.JSONDecodeError:
+        i, j = t.find("{"), t.rfind("}")
+        if 0 <= i < j:
+            try:
+                return json.loads(t[i:j + 1])
+            except json.JSONDecodeError:
+                return None
+    return None
 
 
 def codex_usage(log: Path) -> dict:
