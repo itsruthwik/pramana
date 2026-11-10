@@ -209,11 +209,13 @@ CRITIC_INSTRUCTIONS = """
 Switch roles. The evidence for this design is already in this conversation; do not re-read
 it in full, look things up only to check a specific claim. Below are the items of the
 analysis{merged}. For each, check only whether its reason holds against that evidence:
-- Unsupported: the reason misreads, contradicts or invents evidence (e.g. says a pass
-  optimised nothing when its table shows it did, or cites a number that is not there).
-- Supported: it follows from the evidence or is a standard property of Vivado.
-Do not judge whether the choice is wise, only whether its reason holds. Be honest about your
-own earlier answer: a reason written quickly is often wrong in a detail.
+- Unsupported: the reason CONTRADICTS or INVENTS evidence (e.g. says a pass optimised
+  nothing when its table shows it did, or cites a number that is not there).
+- Supported: it follows from the evidence, is a reasonable reading of it, or is a standard
+  property of Vivado. Evidence that is merely incomplete (a report that does not mention
+  something) is not a contradiction; do not reject for that.
+Do not judge whether the choice is wise or whether you would phrase it better, only whether
+its reason is contradicted or invented.
 List ONLY unsupported items (id + why, at most 20 words). For a cut group whose reason holds
 for some factors but not others, give `factors`: only the ones it does not hold for. An empty
 list is valid.
