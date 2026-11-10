@@ -186,7 +186,9 @@ def run_codex(cfg: Config, stage: str, name: str, task: str, cwd: Path,
               done: Callable[[], str | None], key: str | None = None,
               system: str | None = None, timeout_s: float = 3600, max_nudges: int = 3,
               task_file: str = "task.md", model: str = "") -> dict:
-    """Same protocol as run() with `codex exec` (headless, no tmux). Codex has no tool
+    """Same protocol as run() with `codex exec`, run inside a detached tmux session named like
+    the Claude ones (watch it with `tmux attach -t <tmux>`; headless Codex takes no input).
+    Its JSON events are tee'd to <task>.codex.jsonl, which pramana reads. Codex has no tool
     allow-list or system-prompt flag: the system text goes at the top of the task, and the
     sandbox is cfg.codex_sandbox (Codex's own sandbox fails inside Slurm jobs, so the default
     is danger-full-access). If Codex exits without a valid deliverable, the same thread is
@@ -204,6 +206,7 @@ def run_codex(cfg: Config, stage: str, name: str, task: str, cwd: Path,
     (cwd / task_file).write_text(task)
     log = cwd / f"{Path(task_file).stem}.codex.jsonl"
     log.write_text("")
+    tname = re.sub(r"[^A-Za-z0-9_-]", "_", f"pr-{cfg.name}-{stage}-{name}")[:80]
     t0 = time.time()
 
     def call(prompt: str) -> bool:
@@ -214,19 +217,28 @@ def run_codex(cfg: Config, stage: str, name: str, task: str, cwd: Path,
                "-m", model[len(CODEX):], "-c", f"model_reasoning_effort={cfg.llm_effort}",
                "-c", f'sandbox_mode="{cfg.codex_sandbox}"', prompt]   # resume has no -s
         start = log.stat().st_size
-        with open(log, "a") as out:
-            p = subprocess.Popen(cmd, cwd=cwd, stdout=out, stderr=subprocess.STDOUT,
-                                 stdin=subprocess.DEVNULL, text=True, start_new_session=True)
-            try:
-                p.wait(timeout=max(1, t0 + timeout_s - time.time()))
+        if _alive(tname):
+            _tmux("kill-session", "-t", tname)
+        shell = (" ".join(_q(x) for x in cmd) + " < /dev/null 2>&1 | tee -a " + _q(str(log)))
+        _tmux("new-session", "-d", "-s", tname, "-x", "220", "-y", "50", "-c", str(cwd), shell,
+              check=True)
+        pid = _tmux("display-message", "-p", "-t", tname, "#{pane_pid}").stdout.strip()
+        timed_out = True
+        while time.time() - t0 < timeout_s:
+            time.sleep(2)
+            if not _alive(tname):
                 timed_out = False
-            except subprocess.TimeoutExpired:
-                timed_out = True        # stop codex and everything it started
-                os.killpg(p.pid, signal.SIGTERM)
+                break
+        if timed_out and pid.isdigit():
+            # the pane's shell leads one process group (codex, tee and their children)
+            for sig in (signal.SIGTERM, signal.SIGKILL):
                 try:
-                    p.wait(timeout=30)
-                except subprocess.TimeoutExpired:
-                    os.killpg(p.pid, signal.SIGKILL)
+                    os.killpg(int(pid), sig)
+                except ProcessLookupError:
+                    break
+                time.sleep(30 if sig == signal.SIGTERM else 0)
+        if _alive(tname):
+            _tmux("kill-session", "-t", tname)
         if sid is None:
             with open(log) as f:
                 f.seek(start)
@@ -250,7 +262,7 @@ def run_codex(cfg: Config, stage: str, name: str, task: str, cwd: Path,
         timed_out = call(f"Your deliverable is not complete yet: {why} Please finish it now.")
         why = done()
     status = "ok" if why is None else ("timeout" if timed_out else "exited")
-    rec = {"stage": stage, "name": name, "session_id": sid, "tmux": None, "resumed": resume,
+    rec = {"stage": stage, "name": name, "session_id": sid, "tmux": tname, "resumed": resume,
            "status": status, "problem": why, "nudges": nudges, "model": model,
            "effort": cfg.llm_effort, "duration_s": round(time.time() - t0, 1),
            "usage": codex_usage(log), "usage_per_call": True, "cwd": str(cwd)}
