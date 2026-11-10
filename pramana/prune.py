@@ -317,7 +317,8 @@ def critique(c: Campaign, did: str, rnd: int, out: dict, n: int, key: str) -> di
         return {**out, "critic": {"status": "nothing to check"}}
     merged = f" (merged from {n} analysts)" if n > 1 else ""
     v = llm.ask(c.cfg, "critic", f"{did}_r{rnd}_critic",
-                CRITIC_INSTRUCTIONS.format(merged=merged, items=items), CRITIC_SCHEMA, key=key)
+                CRITIC_INSTRUCTIONS.format(merged=merged, items=items), CRITIC_SCHEMA,
+                system=SYSTEM, key=key)   # same system prompt as the analyst: keeps the cache
     if v is None:
         return {**out, "critic": {"status": "failed; answer not checked"}}
     bad = {x["id"]: x["why"] for x in v["unsupported"] if x["id"] in ids}
