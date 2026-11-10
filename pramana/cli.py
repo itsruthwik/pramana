@@ -104,6 +104,9 @@ def stage(name: str, cfg: Config, log) -> None:
         print(status.text(c))
         return
     log(f"=== {name} done in {time.time() - t0:.0f}s ===")
+    if name in ("prune", "search", "discover", "distill"):   # the stages that call the LLM
+        from . import llm
+        log(llm.spend_line(cfg))
 
 
 PREPARE = ["space", "profile", "probe", "baseline"]   # framework-level, done once per DCP

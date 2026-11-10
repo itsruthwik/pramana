@@ -47,8 +47,14 @@ def transcript(sid: str) -> Path | None:
     return hits[0] if hits else None
 
 
+USAGE_KEYS = ("input_tokens", "output_tokens", "cache_read_input_tokens",
+              "cache_creation_input_tokens", "assistant_turns")
+
+
 def usage(sid: str) -> dict:
-    """Token totals from the session transcript (interactive sessions report no cost)."""
+    """Token totals over the WHOLE session transcript, all turns so far (interactive sessions
+    report no cost). run() subtracts the totals from before its turn, so each call's record
+    holds only that call's tokens."""
     t = transcript(sid)
     tot = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0,
            "cache_creation_input_tokens": 0, "assistant_turns": 0}
@@ -102,6 +108,7 @@ def run(cfg: Config, stage: str, name: str, task: str, cwd: Path, done: Callable
     store = SessionStore(cfg)
     sid = store.get(key) if key else None
     resume = sid is not None and transcript(sid) is not None
+    before = usage(sid) if resume else {k: 0 for k in USAGE_KEYS}
     if not resume:
         sid = str(uuid.uuid4())
         if key:
@@ -154,7 +161,8 @@ def run(cfg: Config, stage: str, name: str, task: str, cwd: Path, done: Callable
     rec = {"stage": stage, "name": name, "session_id": sid, "tmux": tname, "resumed": resume,
            "status": status, "problem": why, "nudges": nudges, "model": model,
            "effort": cfg.llm_effort, "duration_s": round(time.time() - t0, 1),
-           "usage": usage(sid), "cwd": str(cwd)}
+           "usage": {k: v - before.get(k, 0) for k, v in usage(sid).items()},
+           "usage_per_call": True, "cwd": str(cwd)}
     (cwd / f"{Path(task_file).stem}.session.json").write_text(json.dumps(rec, indent=1))
     return rec
 

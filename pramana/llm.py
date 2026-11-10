@@ -108,13 +108,67 @@ def agent(cfg: Config, stage: str, name: str, prompt: str, cwd: Path,
     return rec
 
 
+# API list prices, $ per million tokens: (input, output, cache read, cache write).
+# Cache writes assume the 5-minute cache (1.25x input). Sessions run on the subscription, so
+# this is what the same tokens would cost on the API, not a bill.
+PRICES = {"claude-sonnet-5-5": (2.0, 10.0, 0.20, 2.50),
+          "claude-opus-5-5": (4.0, 20.0, 0.20, 5.00),
+          "claude-haiku-5-5": (0.10, 0.50, 0.01, 0.125)}
+TOKEN_KEYS = ("input_tokens", "output_tokens", "cache_read_input_tokens",
+              "cache_creation_input_tokens", "assistant_turns")
+
+
+def _call_usage(recs: list[dict]) -> None:
+    """Records from before per-call usage hold the session's running total; turn them into
+    per-call numbers (difference from the previous call in the same session)."""
+    by: dict = {}
+    for r in recs:
+        if not r.get("usage_per_call"):
+            by.setdefault(r.get("session_id"), []).append(r)
+    for rs in by.values():
+        rs.sort(key=lambda r: r["_ts"])
+        prev = {k: 0 for k in TOKEN_KEYS}
+        for r in rs:
+            u = r.get("usage") or {}
+            r["usage"] = {k: max(0, (u.get(k) or 0) - prev[k]) for k in TOKEN_KEYS}
+            prev = {k: u.get(k) or 0 for k in TOKEN_KEYS}
+
+
 def spend(cfg: Config) -> dict:
-    """Total logged LLM cost and calls per stage."""
-    out: dict = {}
+    """LLM calls, tokens and estimated API-price cost per stage, plus a total."""
+    recs = []
     for f in (cfg.root / "llm").glob("*/*.response.json"):
         r = json.loads(f.read_text())
-        s = out.setdefault(r["stage"], {"calls": 0, "cost_usd": 0.0, "output_tokens": 0})
-        s["calls"] += 1
-        s["cost_usd"] += r.get("cost_usd") or 0.0        # headless-era records only
-        s["output_tokens"] += (r.get("usage") or {}).get("output_tokens") or 0
+        r["_ts"] = f.name.rsplit("_", 1)[-1]          # name_<YYYYmmdd-HHMMSS>.response.json
+        recs.append(r)
+    _call_usage(recs)
+    out: dict = {}
+    for r in recs:
+        for st in (r["stage"], "TOTAL"):
+            s = out.setdefault(st, {"calls": 0, **{k: 0 for k in TOKEN_KEYS}, "est_usd": 0.0})
+            s["calls"] += 1
+            u = r.get("usage") or {}
+            for k in TOKEN_KEYS:
+                s[k] += u.get(k) or 0
+            p = PRICES.get(r.get("model") or cfg.llm_model)
+            if p:
+                s["est_usd"] += ((u.get("input_tokens") or 0) * p[0]
+                                 + (u.get("output_tokens") or 0) * p[1]
+                                 + (u.get("cache_read_input_tokens") or 0) * p[2]
+                                 + (u.get("cache_creation_input_tokens") or 0) * p[3]) / 1e6
+            s["est_usd"] += r.get("cost_usd") or 0.0     # headless-era records only
+    for s in out.values():
+        s["est_usd"] = round(s["est_usd"], 2)
     return out
+
+
+def spend_line(cfg: Config) -> str:
+    """One log line: total and per-stage estimated cost."""
+    sp = spend(cfg)
+    if not sp:
+        return "[llm] no LLM calls yet"
+    t = sp.pop("TOTAL")
+    per = ", ".join(f"{k} ${v['est_usd']} ({v['calls']})" for k, v in sorted(sp.items()))
+    return (f"[llm] spend so far: ${t['est_usd']} est. at API prices, {t['calls']} calls, "
+            f"{t['output_tokens']} out / {t['cache_read_input_tokens']} cache-read / "
+            f"{t['cache_creation_input_tokens']} cache-write tokens; {per}")

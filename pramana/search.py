@@ -7,7 +7,8 @@ Each round, per design:
   test    (~20%): hypothesis test chains, then the shared floor (every directive single, run
                   from the input DCP so the same action is measured on every design)
   audit   (~10%): random points that use a pruned-out factor (measures false prunes)
-Then: run, score LLM predictions, write the checkpoint report, re-prune with the new results.
+Then: run, score LLM predictions, write the checkpoint report (data only, no LLM), and
+re-prune if something changed (new best state or an audit that beat the noise floor).
 A design stops after two rounds without a gain above its noise floor.
 """
 from __future__ import annotations
@@ -17,7 +18,7 @@ import math
 import random
 from concurrent.futures import ThreadPoolExecutor
 
-from . import evidence, llm, prune, space
+from . import evidence, prune, space
 from .campaign import Campaign
 from .space import chain_key, step_factors
 
@@ -283,7 +284,11 @@ def audit_summary(c: Campaign, did: str) -> str:
 
 
 def reprune_context(c: Campaign, did: str, prev: dict, st: dict) -> str:
-    cuts = "\n".join(f"  {x['factor']} ({x['confidence']}): {x['reason'][:160]}" for x in prev["cuts"])
+    groups: dict[str, list[dict]] = {}
+    for x in prev["cuts"]:
+        groups.setdefault(x["reason"], []).append(x)
+    cuts = "\n".join(f"  {', '.join(x['factor'] for x in g)} ({g[0]['confidence']}): {r[:160]}"
+                     for r, g in groups.items())
     pairs = st.get("pred_pairs", [])
     rho = spearman([tuple(p) for p in pairs])
     return (f"## Results so far on this design (dWNS is vs each run's start state)\n"
@@ -297,11 +302,22 @@ def reprune_context(c: Campaign, did: str, prev: dict, st: dict) -> str:
             f"they extend the current best chain.")
 
 
+# --------------------------------------------------------------------------- reprune trigger
+def needs_reprune(c: Campaign, did: str, prev: dict) -> str | None:
+    """Why the design should be re-pruned, or None to reuse the previous prune.
+    Re-prune when the best state moved (proposals must start from it) or when an audit of a
+    pruned-out factor since the last prune gained more than the noise floor (a cut was wrong)."""
+    if c.best_state(did)["id"] != prev["start"]:
+        return "new best state"
+    nf = c.noise_floor(did)
+    for r in c.results(did):
+        if (r["purpose"] == "audit" and (r.get("round") or 0) > prev["round"] and r["valid"]
+                and (r["d_wns"] or 0) > nf):
+            return f"audit {r['chain_key']} gained {r['d_wns']} ns"
+    return None
+
+
 # --------------------------------------------------------------------------- report
-REPORT_SCHEMA = {"type": "object", "properties": {"report_markdown": {"type": "string"}},
-                 "required": ["report_markdown"]}
-
-
 def checkpoint_report(c: Campaign, rnd: int, st: dict) -> None:
     parts = [f"# Search round {rnd} checkpoint\n"]
     for d in c.designs():
@@ -318,16 +334,9 @@ def checkpoint_report(c: Campaign, rnd: int, st: dict) -> None:
                          f"{pr['kept_factors']}/{pr['total_factors']} factors.\n")
     rho = spearman([tuple(p) for p in st.get("pred_pairs", [])])
     parts.append(f"LLM prediction Spearman rho (cumulative): {rho}; LLM weight {st['llm_weight']:.2f}")
-    data = "\n".join(parts)
-    prompt = (data + "\n\nWrite a concise checkpoint report (markdown) for the researcher: what "
-              "was learned this round across designs, which actions help on which kinds of design "
-              "and which don't, whether pruning looks right (audits), surprises, and what the next "
-              "round should focus on. Cite numbers from the data; invent none. Under 700 words.")
-    out = llm.ask(c.cfg, "report", f"round{rnd}", prompt, REPORT_SCHEMA)
     rd = c.root / "reports"
     rd.mkdir(exist_ok=True)
-    body = out["report_markdown"] if out else "(LLM report failed)"
-    (rd / f"round_{rnd}.md").write_text(body + "\n\n---\n## Data\n\n" + data)
+    (rd / f"round_{rnd}.md").write_text("\n".join(parts))
 
 
 # --------------------------------------------------------------------------- main loop
@@ -377,6 +386,11 @@ def run(c: Campaign, log=print) -> None:
                 return prev
             if prev["round"] >= rnd:
                 return prev
+            why = needs_reprune(c, did, prev)
+            if why is None:
+                log(f"[search]   {did} r{rnd}: nothing new since r{prev['round']}; reusing its prune")
+                return prev
+            log(f"[search]   {did} r{rnd}: re-pruning ({why})")
             return prune.prune_design(c, did, rnd, c.best_state(did),
                                       extra=reprune_context(c, did, prev, st), prev=prev)
         with ThreadPoolExecutor(4) as ex:

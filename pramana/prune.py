@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from concurrent.futures import ThreadPoolExecutor
 
-from . import evidence, llm, space
+from . import evidence, llm, session, space
 from .campaign import Campaign
 
 STEP_SCHEMA = {
@@ -27,23 +27,25 @@ SCHEMA = {
     "type": "object",
     "properties": {
         "diagnosis": {"type": "string",
-                      "description": "What limits timing on this design, citing evidence."},
-        "cuts": {"type": "array", "items": {
+                      "description": "What limits timing on this design, citing evidence. At most 80 words."},
+        "cuts": {"type": "array", "description": "Groups of factors cut for the same reason.",
+                 "items": {
             "type": "object",
-            "properties": {"factor": {"type": "string"}, "reason": {"type": "string"},
+            "properties": {"factors": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+                           "reason": {"type": "string", "description": "At most 15 words."},
                            "confidence": {"type": "number"}},
-            "required": ["factor", "reason", "confidence"]}},
+            "required": ["factors", "reason", "confidence"]}},
         "uncuts": {"type": "array", "items": {"type": "string"},
                    "description": "Previously cut factors to bring back (re-prune only)."},
         "proposals": {"type": "array", "items": {
             "type": "object",
             "properties": {"chain": {"type": "array", "items": STEP_SCHEMA},
                            "predicted_d_wns": {"type": "number"},
-                           "reason": {"type": "string"}},
+                           "reason": {"type": "string", "description": "At most 15 words."}},
             "required": ["chain", "predicted_d_wns", "reason"]}},
         "hypotheses": {"type": "array", "items": {
             "type": "object",
-            "properties": {"claim": {"type": "string"},
+            "properties": {"claim": {"type": "string", "description": "At most 25 words."},
                            "factors": {"type": "array", "items": {"type": "string"}},
                            "prediction": {"type": "string"},
                            "test_chain": {"type": "array", "items": STEP_SCHEMA}},
@@ -64,7 +66,8 @@ You are given a routed design's reports, its Explore baseline runs (with per-pas
 show what every internal optimisation did on THIS design), and the full space of Vivado
 choices as FACTORS. Decide which factors are worth searching on this design.
 
-- Output `cuts`: factors to REMOVE from this design's search. Everything not cut stays.
+- Output `cuts`: factors to REMOVE from this design's search, in groups that share one
+  reason (e.g. all opt directives because opt passes changed 0 cells). Everything not cut stays.
   This is a HARD prune: cut factors get only a small random audit budget later, and audits
   will measure whether your cuts were right. Cut aggressively where the evidence says a
   factor has nothing to act on (e.g. a pass that optimised 0 cells under Explore, no DSP/BRAM
@@ -85,6 +88,9 @@ choices as FACTORS. Decide which factors are worth searching on this design.
 - `hypotheses`: 2-5 testable claims about this design (e.g. "placement, not routing, limits
   this design: re-place directives beat all route directives"), naming the factors involved,
   what result would confirm them, and optionally a test chain.
+- Be terse. Each reason is at most 15 words and names its evidence (e.g. "opt_explore log:
+  0 cells changed") instead of copying it. Diagnosis at most 80 words. Do not restate the
+  evidence or explain the task back; spend your words on judgement.
 """
 
 
@@ -182,32 +188,51 @@ def validate(spec: dict, out: dict, prev_cuts: set[str] | None = None) -> dict:
 
 CRITIC_SCHEMA = {
     "type": "object",
-    "properties": {"verdicts": {"type": "array", "items": {
+    "properties": {"unsupported": {"type": "array", "items": {
         "type": "object",
-        "properties": {"id": {"type": "string"}, "supported": {"type": "boolean"},
-                       "why": {"type": "string"}},
-        "required": ["id", "supported", "why"]}}},
-    "required": ["verdicts"],
+        "properties": {"id": {"type": "string"},
+                       "why": {"type": "string", "description": "At most 20 words."}},
+        "required": ["id", "why"]}}},
+    "required": ["unsupported"],
 }
 
-CRITIC_SYSTEM = ("You are a strict reviewer of timing-closure analyses for AMD Vivado. You check "
-                 "each claim against the evidence given and nothing else.")
-
 CRITIC_INSTRUCTIONS = """
-## Your task: check this analysis against the evidence above
+## Re-check: review the analysis as a strict critic
 
-Below is an analysis of this design (cuts, proposals, hypotheses), merged from {n} independent
-analyst(s). For EVERY item, decide whether its reason is supported by the evidence above
-(reports, Explore baseline runs and pass tables, the knowledge base from earlier designs).
-- supported = true: the reason cites or follows from evidence shown above, or is a standard,
-  uncontroversial property of Vivado; no number in it contradicts the evidence.
-- supported = false: the reason misreads, contradicts or invents evidence (e.g. claims a pass
-  optimised nothing when the table shows it did, cites a measurement that isn't there).
-Do not judge whether you would have made the same choice; only whether the reason holds.
-Return one verdict per item id, with a one-sentence why.
+Switch roles. The evidence for this design is already in this conversation; do not re-read
+it in full, look things up only to check a specific claim. Below are the items of the
+analysis{merged}. For each, check only whether its reason holds against that evidence:
+- Unsupported: the reason misreads, contradicts or invents evidence (e.g. says a pass
+  optimised nothing when its table shows it did, or cites a number that is not there).
+- Supported: it follows from the evidence or is a standard property of Vivado.
+Do not judge whether the choice is wise, only whether its reason holds. Be honest about your
+own earlier answer: a reason written quickly is often wrong in a detail.
+List ONLY unsupported items (id + why, at most 20 words). An empty list is valid.
 
 {items}
 """
+
+# Resumed sessions already hold the design evidence from their first turn; later rounds send
+# only what is new, so the conversation does not carry a copy of the evidence per round.
+RESUME_NOTE = ("The design evidence (reports, Explore baseline runs, knowledge base, space and "
+               "factors) is in your first message in this conversation and has not changed. "
+               "Below is only what is new since your last answer.")
+
+
+def resumable(c: Campaign, key: str) -> bool:
+    """True if `key` maps to a session whose transcript exists, i.e. llm.ask will resume it."""
+    sid = session.SessionStore(c.cfg).get(key)
+    return sid is not None and session.transcript(sid) is not None
+
+
+def _expand(out: dict) -> dict:
+    """Grouped cuts ({factors, reason, confidence}) -> one cut per factor, the form the rest
+    of pramana (merge, validate, search audits, distill) uses."""
+    cuts = []
+    for g in out.get("cuts", []):
+        for f in g.get("factors") or ([g["factor"]] if "factor" in g else []):
+            cuts.append({"factor": f, "reason": g["reason"], "confidence": g["confidence"]})
+    return {**out, "cuts": cuts}
 
 
 def _merge(outs: list[dict]) -> dict:
@@ -249,11 +274,15 @@ def _merge(outs: list[dict]) -> dict:
 
 def _critic_items(out: dict) -> tuple[str, dict]:
     lines, ids = [], {}
+    groups: dict[str, list[dict]] = {}
     for ct in out.get("cuts", []):
-        i = f"cut:{ct['factor']}"
-        ids[i] = ct
-        lines.append(f"- id `{i}`: CUT {ct['factor']} (confidence {ct['confidence']}). "
-                     f"Reason: {ct['reason']}")
+        groups.setdefault(ct["reason"], []).append(ct)
+    for j, (reason, cts) in enumerate(groups.items()):
+        i = f"cuts:{j}"
+        ids[i] = cts
+        conf = round(sum(x["confidence"] for x in cts) / len(cts), 2)
+        lines.append(f"- id `{i}`: CUT {', '.join(x['factor'] for x in cts)} "
+                     f"(confidence {conf}). Reason: {reason}")
     for j, p in enumerate(out.get("proposals", [])):
         i = f"prop:{j}"
         ids[i] = p
@@ -266,27 +295,29 @@ def _critic_items(out: dict) -> tuple[str, dict]:
     return "\n".join(lines), ids
 
 
-def critique(c: Campaign, did: str, rnd: int, evidence_md: str, out: dict, n: int) -> dict:
-    """Drop cuts and proposals whose reasons the critic finds unsupported (the factor stays in
+def critique(c: Campaign, did: str, rnd: int, out: dict, n: int, key: str) -> dict:
+    """A second turn in the analyst's own session (`key`), which already holds the evidence,
+    so the prompt is just the review rules and the items. Drop cuts and proposals whose
+    reasons it finds unsupported (the factor stays in
     the search; the chain is not run); hypotheses are kept but marked. If the critic fails,
     the answer passes unchanged."""
     items, ids = _critic_items(out)
     if not ids:
         return {**out, "critic": {"status": "nothing to check"}}
-    v = llm.ask(c.cfg, "critic", f"{did}_r{rnd}",
-                evidence_md + "\n\n" + CRITIC_INSTRUCTIONS.format(n=n, items=items),
-                CRITIC_SCHEMA, system=CRITIC_SYSTEM, key=f"critic_{did}")
+    merged = f" (merged from {n} analysts)" if n > 1 else ""
+    v = llm.ask(c.cfg, "critic", f"{did}_r{rnd}_critic",
+                CRITIC_INSTRUCTIONS.format(merged=merged, items=items), CRITIC_SCHEMA, key=key)
     if v is None:
         return {**out, "critic": {"status": "failed; answer not checked"}}
-    bad = {x["id"]: x["why"] for x in v["verdicts"] if not x["supported"] and x["id"] in ids}
+    bad = {x["id"]: x["why"] for x in v["unsupported"] if x["id"] in ids}
+    dropped = {ct["factor"] for i in bad if i.startswith("cuts:") for ct in ids[i]}
     hyps = [{**h, "critic": "unsupported: " + bad[f"hyp:{j}"]} if f"hyp:{j}" in bad else h
             for j, h in enumerate(out.get("hypotheses", []))]
     return {**out,
-            "cuts": [ct for ct in out.get("cuts", []) if f"cut:{ct['factor']}" not in bad],
+            "cuts": [ct for ct in out.get("cuts", []) if ct["factor"] not in dropped],
             "proposals": [p for j, p in enumerate(out.get("proposals", [])) if f"prop:{j}" not in bad],
             "hypotheses": hyps,
-            "critic": {"status": "ok", "checked": len(ids), "rejected": bad,
-                       "unjudged": sorted(set(ids) - {x["id"] for x in v["verdicts"]})}}
+            "critic": {"status": "ok", "checked": len(ids), "rejected": bad}}
 
 
 def prune_design(c: Campaign, did: str, rnd: int, start: dict, extra: str = "",
@@ -299,14 +330,13 @@ def prune_design(c: Campaign, did: str, rnd: int, start: dict, extra: str = "",
         evidence.baseline_brief(c, did),
         evidence.kb_brief(c, did),
         extra])
-    prompt = "\n\n".join([
-        evid,
-        evidence.space_brief(spec),
-        "## Factors\n" + factors_by_command(spec),
-        f"## Start state for proposals\nstate {start['id']}: WNS {start['wns']} ns, reached by: {lineage}",
-        INSTRUCTIONS.format(n_total=n_total, n_keep=int(n_total * KEEP_FRACTION),
-                            n_cut=n_total - int(n_total * KEEP_FRACTION)),
-    ])
+    start_md = f"## Start state for proposals\nstate {start['id']}: WNS {start['wns']} ns, reached by: {lineage}"
+    task_md = INSTRUCTIONS.format(n_total=n_total, n_keep=int(n_total * KEEP_FRACTION),
+                                  n_cut=n_total - int(n_total * KEEP_FRACTION))
+    full = "\n\n".join([evid, evidence.space_brief(spec),
+                         "## Factors\n" + factors_by_command(spec), start_md, task_md])
+    # a resumed analyst already has the evidence; it gets the new results and the task again
+    delta = "\n\n".join([RESUME_NOTE, extra, start_md, task_md])
     models = c.cfg.analysts or [c.cfg.llm_model]
 
     def one(i_m):
@@ -314,12 +344,14 @@ def prune_design(c: Campaign, did: str, rnd: int, start: dict, extra: str = "",
         # the first analyst keeps the historical session key, so old campaigns resume it
         key = f"analyst_{did}" if i == 0 else f"analyst{i}_{did}"
         name = f"{did}_r{rnd}" if i == 0 else f"{did}_r{rnd}_a{i}"
-        return llm.ask(c.cfg, "prune", name, prompt, SCHEMA, system=SYSTEM, key=key, model=m)
+        prompt = delta if extra and resumable(c, key) else full
+        return key, llm.ask(c.cfg, "prune", name, prompt, SCHEMA, system=SYSTEM, key=key, model=m)
     with ThreadPoolExecutor(len(models)) as ex:
-        outs = [o for o in ex.map(one, enumerate(models)) if o is not None]
+        answered = [(k, _expand(o)) for k, o in ex.map(one, enumerate(models)) if o is not None]
+    outs = [o for _, o in answered]
     out = _merge(outs) if outs else None
     if out is not None and c.cfg.critic:
-        out = critique(c, did, rnd, evid, out, len(outs))
+        out = critique(c, did, rnd, out, len(outs), key=answered[0][0])
     if out is None:
         # LLM failure: keep the previous prune, or keep everything
         res = prev or validate(spec, {"cuts": [], "proposals": [], "hypotheses": []})
