@@ -1,7 +1,8 @@
 # pramana
 
 Generate a timing-closure knowledge base from a training set of post-route Vivado DCPs, and
-compile it for an LLM agent (maya) or a deterministic flow (mithya).
+compile it for an LLM agent (maya) or a deterministic flow (mithya). mithya is a fixed executor
+(`pramana/mithya_shim/`); every learned decision it runs comes from pramana's `policy.json`.
 
 What and why: [docs/framework_arch.md](docs/framework_arch.md).
 

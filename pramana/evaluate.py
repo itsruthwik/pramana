@@ -1,7 +1,9 @@
 """Evaluate a compiled mithya bundle on designs (normally held-out ones).
 
 For each design: profile -> features -> classify -> sequence_for(bin, budget) -> run all steps
-in one Vivado session (candidate steps keep-if-better) -> measure. Compared against the
+in one Vivado session (candidate steps keep-if-better) -> measure. Everything except the
+measurement comes from the bundle: its policy.json (learned by pramana) and its fixed shim
+(classify/recipes/executor + protocol.py), see pramana/mithya_shim/README.md. Compared against the
 design's Explore baselines (no-KB reference). Results go to <eval campaign>/results.jsonl.
 
   python -m pramana.evaluate <train_campaign> <eval_campaign> [budget_s]
@@ -9,51 +11,33 @@ The eval campaign must already be initialised and profiled (pramana init/profile
 """
 from __future__ import annotations
 
-import importlib.util
+import importlib
 import json
 import sys
 from pathlib import Path
 
 from .campaign import Campaign
-from .compile import KIB_TCL
 from .config import Config
 
-
-def _load(mod_path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, mod_path)
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
+BUNDLE_MODULES = ("protocol", "policy", "classify", "recipes", "executor", "features")
 
 
-STEP_LIMIT_S = 900      # a step estimated to take longer is not started (one batch session
-                        # cannot stop a running Vivado command; the session itself is killed
-                        # at budget + EVAL_GRACE_S)
-EVAL_GRACE_S = 900
-
-
-def policy_tcl(steps, budget_s: float | None = None, step_limit_s: float | None = STEP_LIMIT_S) -> str:
-    """No step starts unless its estimated time fits before the deadline (a running step
-    finishes: Vivado commands can't be interrupted cleanly) and is at most step_limit_s.
-    The first step always runs unless it alone exceeds the step limit."""
-    lines = [KIB_TCL]
-    if budget_s:
-        lines.append(f"set ::pramana::deadline [expr {{[clock seconds] + {int(budget_s)}}}]")
-    for i, s in enumerate(steps):
-        body = "; ".join(s.tcl)
-        est = int(getattr(s, "est_secs", 0) or 0)
-        if step_limit_s and est > step_limit_s:
-            lines.append(f"puts \"PRAMANA {s.name} skipped (estimated {est} s > step limit "
-                         f"{int(step_limit_s)} s)\"")
-            continue
-        need = 0 if i == 0 else est
-        if s.mode == "committed":
-            lines.append(f"if {{[::pramana::time_left {need}]}} {{\nputs \"PRAMANA step {s.name} "
-                         f"(committed)\"\n{body}\n}} else {{puts \"PRAMANA {s.name} skipped "
-                         f"(does not fit the time left)\"}}")
-        else:
-            lines.append(f"::pramana::keep_if_better {{{s.name}}} {{{body}}} [pwd] {need}")
-    return "\n".join(lines)
+def load_bundle(mdir: Path) -> dict:
+    """Import a mithya bundle's modules (they import each other by bare name) without leaving
+    them in sys.modules, so several bundles can be loaded in one process."""
+    mdir = Path(mdir).resolve()
+    if not (mdir / "executor.py").exists():
+        raise SystemExit(f"{mdir}: old-format bundle (no executor.py); re-run compile, or "
+                         f"python -m pramana.compile <kb.json> {mdir}")
+    for n in BUNDLE_MODULES:
+        sys.modules.pop(n, None)
+    sys.path.insert(0, str(mdir))
+    try:
+        return {n: importlib.import_module(n) for n in BUNDLE_MODULES}
+    finally:
+        sys.path.remove(str(mdir))
+        for n in BUNDLE_MODULES:
+            sys.modules.pop(n, None)
 
 
 def run(train: Campaign, ev: Campaign, budget_s: float = 3000, log=print,
@@ -63,9 +47,9 @@ def run(train: Campaign, ev: Campaign, budget_s: float = 3000, log=print,
     designs: subset of the eval campaign's designs; label: names the KB version in tags."""
     mdir = Path(bundle) if bundle else train.root / "out" / "mithya"
     label = label or train.cfg.name
-    feats_mod = _load(mdir / "features.py", f"pramana_eval_features_{label}")
-    cls = _load(mdir / "classify.py", f"pramana_eval_classify_{label}")
-    rec_mod = _load(mdir / "recipes.py", f"pramana_eval_recipes_{label}")
+    m = load_bundle(mdir)
+    feats_mod, cls, rec_mod, ex, proto = (m["features"], m["classify"], m["recipes"],
+                                          m["executor"], m["protocol"])
     jobs, plan = [], {}
     for d in ev.designs():
         did = d["id"]
@@ -77,8 +61,8 @@ def run(train: Campaign, ev: Campaign, budget_s: float = 3000, log=print,
         steps = rec_mod.sequence_for(b, budget_s, prims)
         plan[did] = {"bin": b, "steps": [(s.name, s.mode, round(s.est_secs)) for s in steps]}
         jobs.append(ev.job(did, ev.input_state(did), [], "evaluate",
-                           tag=f"mithya:{label}:{b}", extra_tcl=policy_tcl(steps, budget_s),
-                           timeout_s=budget_s + EVAL_GRACE_S))
+                           tag=f"mithya:{label}:{b}", extra_tcl=ex.policy_tcl(steps, budget_s),
+                           timeout_s=budget_s + proto.GRACE_S))
     (ev.root / f"eval_plan_{label}.json").write_text(json.dumps(plan, indent=1))
     ev.runner.run_many(jobs, log=log)
     # identical policies (same Tcl) are the same run: look every job up, new or reused
