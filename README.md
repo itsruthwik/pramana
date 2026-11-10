@@ -34,6 +34,10 @@ python3 -m pramana all dev1                    # S0..S8
 python3 -m pramana status dev1
 python3 -m pramana.evaluate dev1 eval1 3000     # apply the mithya bundle to eval1's designs
 scripts/chain.sh dev1 eval1                    # all of the above, unattended
+# incremental: 10 designs per batch, full KB snapshot after each (campaigns/<c>/snapshots/n10, n20, ...)
+python3 -m pramana.incremental tr1 --dcp-list dcp_database/split_train.csv --step 10 --batches 1 \
+    --llm-model codex:gpt-6.1-terra      # stops after 1 batch; run again to add the next 10
+python3 -m pramana.evaluate tr1 eval1 3000 campaigns/tr1/snapshots/n10/out/mithya
 ```
 
 Shared data lives in `store/` (git-ignored); campaigns read reference runs and profiles from it

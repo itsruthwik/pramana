@@ -99,6 +99,9 @@ def run(train: Campaign, ev: Campaign, budget_s: float = 3000, log=print,
 
 
 if __name__ == "__main__":
+    # python -m pramana.evaluate <train> <eval> [budget_s] [bundle dir, e.g. a KB snapshot's
+    #   campaigns/<train>/snapshots/n10/out/mithya]
     a = sys.argv[1:]
     run(Campaign(Config.load(a[0])), Campaign(Config.load(a[1])),
-        float(a[2]) if len(a) > 2 else 3000)
+        float(a[2]) if len(a) > 2 else 3000, bundle=Path(a[3]) if len(a) > 3 else None,
+        label=f"{a[0]}_{Path(a[3]).parent.parent.name}" if len(a) > 3 else None)
