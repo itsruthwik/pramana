@@ -14,7 +14,53 @@ import json
 import time
 from pathlib import Path
 
-import jsonschema
+try:
+    import jsonschema
+    ValidationError = jsonschema.ValidationError
+except ImportError:          # some cluster nodes' Python has no jsonschema (and no pip)
+    jsonschema = None
+
+    class ValidationError(Exception):
+        @property
+        def message(self) -> str:
+            return str(self)
+
+_TYPES = {"object": dict, "array": list, "string": str, "boolean": bool,
+          "integer": int, "number": (int, float), "null": type(None)}
+
+
+def _check(obj, schema: dict, path: str = "$") -> None:
+    """Minimal JSON-schema check used when jsonschema is not installed: type (incl. lists of
+    types), enum, required, properties, items, minItems. Enough for pramana's schemas."""
+    t = schema.get("type")
+    if t:
+        ts = t if isinstance(t, list) else [t]
+        ok = any(isinstance(obj, _TYPES[x]) and not (x in ("integer", "number") and isinstance(obj, bool))
+                 for x in ts)
+        if not ok:
+            raise ValidationError(f"{path}: expected {t}, got {type(obj).__name__}")
+    if "enum" in schema and obj not in schema["enum"]:
+        raise ValidationError(f"{path}: {obj!r} not one of {schema['enum']}")
+    if isinstance(obj, dict):
+        for k in schema.get("required", []):
+            if k not in obj:
+                raise ValidationError(f"{path}: missing required key '{k}'")
+        for k, sub in (schema.get("properties") or {}).items():
+            if k in obj:
+                _check(obj[k], sub, f"{path}.{k}")
+    if isinstance(obj, list):
+        if len(obj) < schema.get("minItems", 0):
+            raise ValidationError(f"{path}: fewer than {schema['minItems']} items")
+        if "items" in schema:
+            for i, x in enumerate(obj):
+                _check(x, schema["items"], f"{path}[{i}]")
+
+
+def validate(obj, schema: dict) -> None:
+    if jsonschema is not None:
+        jsonschema.validate(obj, schema)
+    else:
+        _check(obj, schema)
 
 from . import session
 from .config import Config
@@ -54,10 +100,10 @@ def ask(cfg: Config, stage: str, name: str, prompt: str, schema: dict,
             return f"the answer file {ans.name} has not been written."
         try:
             obj = json.loads(ans.read_text())
-            jsonschema.validate(obj, schema)
+            validate(obj, schema)
         except json.JSONDecodeError as e:
             return f"{ans.name} is not valid JSON ({e})."
-        except jsonschema.ValidationError as e:
+        except ValidationError as e:
             return f"{ans.name} does not match the schema: {e.message[:300]}"
         return None
 
