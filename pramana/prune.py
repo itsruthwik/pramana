@@ -28,7 +28,8 @@ SCHEMA = {
     "properties": {
         "diagnosis": {"type": "string",
                       "description": "What limits timing on this design, citing evidence. At most 80 words."},
-        "cuts": {"type": "array", "description": "Groups of factors cut for the same reason.",
+        "cuts": {"type": "array", "description": "Groups of factors cut for the same specific "
+                 "reason: one command per group, at most 12 factors per group.",
                  "items": {
             "type": "object",
             "properties": {"factors": {"type": "array", "items": {"type": "string"}, "minItems": 1},
@@ -67,7 +68,10 @@ show what every internal optimisation did on THIS design), and the full space of
 choices as FACTORS. Decide which factors are worth searching on this design.
 
 - Output `cuts`: factors to REMOVE from this design's search, in groups that share one
-  reason (e.g. all opt directives because opt passes changed 0 cells). Everything not cut stays.
+  specific reason (e.g. the opt directives because opt passes changed 0 cells). A group holds
+  factors of ONE command and at most 12 factors, and its reason must hold for every factor in
+  it; a reviewer rejects the whole group if the reason is wrong for any member. Everything not
+  cut stays.
   This is a HARD prune: cut factors get only a small random audit budget later, and audits
   will measure whether your cuts were right. Cut aggressively where the evidence says a
   factor has nothing to act on (e.g. a pass that optimised 0 cells under Explore, no DSP/BRAM
@@ -191,6 +195,9 @@ CRITIC_SCHEMA = {
     "properties": {"unsupported": {"type": "array", "items": {
         "type": "object",
         "properties": {"id": {"type": "string"},
+                       "factors": {"type": "array", "items": {"type": "string"},
+                                   "description": "For a cuts item: only the factors whose "
+                                   "cut is unsupported. Omit to reject the whole group."},
                        "why": {"type": "string", "description": "At most 20 words."}},
         "required": ["id", "why"]}}},
     "required": ["unsupported"],
@@ -207,7 +214,9 @@ analysis{merged}. For each, check only whether its reason holds against that evi
 - Supported: it follows from the evidence or is a standard property of Vivado.
 Do not judge whether the choice is wise, only whether its reason holds. Be honest about your
 own earlier answer: a reason written quickly is often wrong in a detail.
-List ONLY unsupported items (id + why, at most 20 words). An empty list is valid.
+List ONLY unsupported items (id + why, at most 20 words). For a cut group whose reason holds
+for some factors but not others, give `factors`: only the ones it does not hold for. An empty
+list is valid.
 
 {items}
 """
@@ -310,7 +319,12 @@ def critique(c: Campaign, did: str, rnd: int, out: dict, n: int, key: str) -> di
     if v is None:
         return {**out, "critic": {"status": "failed; answer not checked"}}
     bad = {x["id"]: x["why"] for x in v["unsupported"] if x["id"] in ids}
-    dropped = {ct["factor"] for i in bad if i.startswith("cuts:") for ct in ids[i]}
+    dropped = set()
+    for x in v["unsupported"]:
+        if x["id"] in ids and x["id"].startswith("cuts:"):
+            members = {ct["factor"] for ct in ids[x["id"]]}
+            only = set(x.get("factors") or []) & members
+            dropped |= only or members      # named factors only, else the whole group
     hyps = [{**h, "critic": "unsupported: " + bad[f"hyp:{j}"]} if f"hyp:{j}" in bad else h
             for j, h in enumerate(out.get("hypotheses", []))]
     return {**out,
