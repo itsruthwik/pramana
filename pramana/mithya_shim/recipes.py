@@ -28,10 +28,13 @@ def est_secs(cmds, prims):
 
 
 def sequence_for(bin_name, budget_s, prims=None):
+    """bin_name: a policy name from choose_policy (OUT_OF_RANGE_BIN: the default policy, every
+    step a candidate)."""
     pols, by_budget = POLICY["policies"], POLICY["by_budget"]
-    key = bin_name if bin_name in pols else POLICY["default_bin"]
+    key = bin_name if bin_name in pols else POLICY["default_policy"]
     base = list(pols.get(key, []))
-    if key == "all" and by_budget and prims and "ref" in POLICY["cost_model"]:
+    if key == POLICY["default_policy"] and POLICY["selector"]["name"] == "one_bin" and by_budget \
+            and prims and "ref" in POLICY["cost_model"]:
         rel = budget_s / est_secs(["ref"], prims)
         fit = [b for b in by_budget if b["rel_budget"] <= rel] or by_budget[:1]
         base = fit[-1]["steps"] or base

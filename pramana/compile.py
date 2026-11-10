@@ -8,9 +8,10 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import sys
 from pathlib import Path
 
-from . import flow, funccheck, profile as prof_mod, tcl
+from . import flow, funccheck, profile as prof_mod, profile_ext, ship, tcl
 from .campaign import Campaign
 from .config import REPO
 from .features import FEATURE_DOC
@@ -25,98 +26,9 @@ def _safe_name(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "_", s)[:60]
 
 
-def _ship_by_factor(kb: dict) -> dict[str, str]:
-    return {a["factor"]: a["ship_mode"] for a in kb["actions"]}
-
-
-def step_mode(step: dict, ship: dict) -> str:
-    """committed (plain) only if every factor of the step ships plain."""
-    fs = step_factors(step)
-    return "committed" if fs and all(ship.get(f) == "plain" for f in fs) else "candidate"
-
-
-def policy_steps(units: list[list[dict]], kb: dict) -> list[dict]:
-    """One executable step per unit (a measured run: starts ROUTED, ends ROUTED), so each can
-    be kept or reverted exactly as it was measured."""
-    ship = _ship_by_factor(kb)
-    usable = {f"{r['from_design']}:{r.get('trial')}" for r in kb.get("recipes") or [] if r.get("usable")}
-    out = []
-    for u in units:
-        if not u:   # campaigns before the tcl step type recorded recipe units as []
-            continue
-        # a custom-Tcl unit that edits the netlist ships only if it passed the functional check
-        if any(st["cmd"] == "tcl" and funccheck.edits_netlist(st["tcl"]) and st.get("name") not in usable
-               for st in u):
-            continue
-        cmds, kinds = [], []
-        for name, cs, auto in flow.expand(u):
-            cmds += cs
-            kinds.append(name.split("_", 1)[-1].replace("auto_", ""))
-        modes = {step_mode(st, ship) for st in u}
-        out.append({"name": chain_key(u), "units": u, "tcl": cmds,
-                    "mode": "committed" if modes == {"committed"} else "candidate",
-                    "cmds": kinds})
-    return out
-
-
-def bins(kb: dict) -> dict:
-    pol = kb["policies"]
-    if not pol.get("one_bin"):
-        return {"type": "none"}
-    if pol.get("bins") == "two":
-        tb = pol["two_bin"]
-        return {"type": "two", "feature": tb["feature"], "threshold": tb["threshold"],
-                "low": tb.get("units_low") or [tb["chain_low"]],
-                "high": tb.get("units_high") or [tb["chain_high"]],
-                "lofo": tb["lofo_frac_of_oracle"], "perm_p": tb["perm_p"]}
-    units = pol["one_bin"].get("units") or [pol["one_bin"]["chain"]]
-    port = (pol.get("portfolio") or {}).get("units")
-    if port:
-        # placements first (keep the best of the portfolio), then the policy's post-placement
-        # steps; the policy's own placement unit is dropped, the portfolio replaces it
-        post = [u for u in units if u and not any(st["cmd"] in ("place", "opt") for st in u)]
-        return {"type": "one", "all": port + post, "portfolio": len(port),
-                "lofo": pol["one_bin"]["lofo_frac_of_oracle"]}
-    return {"type": "one", "all": units, "lofo": pol["one_bin"]["lofo_frac_of_oracle"]}
-
-
-def extra_actions(kb: dict, n: int = 6) -> list[dict]:
-    """Single actions worth trying after the policy, each a step.
-
-    They run on the policy's end state, not on the input, so where the KB has interaction
-    evidence for the action after a re-placed state ('placed' kind) that is what ranks it:
-    actions that usually hurt there (interfering) or add nothing (substitute) are dropped, and
-    the gain after is used instead of the gain from the input. Actions without such evidence
-    are ranked by their gain from the input, behind the ones with evidence."""
-    after = {x["step"]: x for x in kb.get("interactions") or [] if x["after_kind"] == "placed"}
-    out = []
-    # placements already in the portfolio are not repeated; other placer directives stay as
-    # extras (cheap insurance: on eval1 a late wirelength-driven re-place gave the largest gains)
-    port = (kb["policies"].get("portfolio") or {}).get("units") or []
-    in_port = {(st["cmd"], st.get("directive")) for u in port for st in u}
-    for a in kb["actions"]:
-        p = a["profile"]
-        if p["p_gain"] < 0.5 or p["median_d_wns"] <= 0 or a["factor"].count(":") != 1:
-            continue
-        cmd, rest = a["factor"].split(":", 1)
-        if (cmd, rest.split("=", 1)[-1]) in in_port:
-            continue
-        if rest.startswith("directive="):
-            st = {"cmd": cmd, "directive": rest.split("=", 1)[1]}
-            if cmd == "route":
-                st["opts"] = {"+ripup": True}
-        else:
-            continue
-        cost = max(p["rel_cost"] or 1, 0.1)
-        x = after.get(f"{cmd}:{st['directive']}")
-        if x:
-            if x["type"] in ("interfering", "substitute") or x["median_after"] <= 0:
-                continue
-            out.append(((1, x["median_after"] / cost), st))
-        else:
-            out.append(((0, p["median_d_wns"] / cost), st))
-    out.sort(key=lambda x: (-x[0][0], -x[0][1]))
-    return [st for _, st in out[:n]]
+# Shipping decisions are made in distill (pramana/ship.py, stored as kb["ship"]); these are
+# re-exported for the maya and adapter writers.
+from .ship import bins, extra_actions, policy_steps, step_mode  # noqa: E402,F401
 
 
 # --------------------------------------------------------------------------- maya
@@ -395,51 +307,74 @@ def write_mithya(kb: dict, b: dict, mith: Path) -> dict:
         "# features.from_profile(<dir>) computes the features (needs profile.json with 'input').\n"
         + tcl.MEASURE_PROCS + tcl.PATHS_DUMP + "\n_paths_dump 200 [file join $_rd paths.tsv]\n"
         + "".join(tcl.safe_report(n, cmd) for n, cmd in prof_mod.REPORTS))
-    rule = {"type": "one"} if b["type"] != "two" else \
-        {"type": "two", "feature": b["feature"], "threshold": b["threshold"]}
-    pols = {}
-    if b["type"] == "one":
-        pols["all"] = policy_steps(b["all"] or [], kb)
-    elif b["type"] == "two":
-        pols["low"] = policy_steps(b["low"] or [], kb)
-        pols["high"] = policy_steps(b["high"] or [], kb)
-    strip = lambda ss: [{k: s[k] for k in ("name", "tcl", "mode", "cmds")} for s in ss]
-    singles = [[st] for st in extra_actions(kb)]
-    pols = {k: strip(v) for k, v in pols.items()}
-    policy_keys = {s["name"] for v in pols.values() for s in v}
-    extra = [s for s in strip(policy_steps(singles, kb)) if s["name"] not in policy_keys]
-    by_budget = []
-    if b["type"] == "one":
-        for x in ((kb["policies"].get("by_budget") or {}).get("budgets") or []):
-            if x.get("units"):
-                by_budget.append({"rel_budget": x["rel_budget"], "lofo": x["lofo_frac_of_oracle"],
-                                  "steps": strip(policy_steps(x["units"], kb))})
-    # policy for a design the bin rule can't place (out of the training range): the bin that
-    # most training designs fall in
-    if rule["type"] == "two":
-        vals = [f.get(rule["feature"]) for f in (kb.get("design_features") or {}).values()]
-        n_low = sum(v is not None and v <= rule["threshold"] for v in vals)
-        n_high = sum(v is not None and v > rule["threshold"] for v in vals)
-        default_bin = "low" if n_low >= n_high else "high"
-    else:
-        default_bin = "all"
-    policy = {"bin_rule": rule, "default_bin": default_bin, "bins": b, "feature_ranges": kb["feature_ranges"],
-              "cost_model": kb["cost_model"], "policies": pols, "extra_actions": extra,
-              "by_budget": by_budget, "kb_meta": kb["meta"]}
+    sh = ship.decide(kb)       # kb["ship"] when distill made it (legacy KBs: computed here)
+    pols, default, sel = sh["policies"], sh["default_policy"], sh["selector"]
+    extra, by_budget = sh["extra_actions"], sh["by_budget"]
+    sd = mith / "selectors"
+    if sd.exists():
+        shutil.rmtree(sd)
+    sd.mkdir()
+    (mith / sel["file"]).write_text(sel["code"])
+    for old in ("extractors",):
+        if (mith / old).exists():
+            shutil.rmtree(mith / old)
+    (mith / "profile_ext.tcl").write_text(
+        "# Extended profile (pramana S7a). Run in Vivado on the open routed design with _rd set\n"
+        "# to an output dir; the selector reads these reports with profile.tcl's (extract.py).\n"
+        + tcl.MEASURE_PROCS + profile_ext.body())
+    policy = {"selector": {k: sel[k] for k in ("name", "file", "model")},
+              "default_policy": default, "policies": pols, "extra_actions": extra,
+              "by_budget": by_budget, "cost_model": kb["cost_model"],
+              "feature_ranges": kb["feature_ranges"], "kb_meta": kb["meta"],
+              "selector_scores": {k: sel.get(k) for k in ("lofo", "val")}}
     (mith / "policy.json").write_text(json.dumps(policy, indent=1, sort_keys=True))
-    md = ["# mithya policy (learned by pramana)", "", f"Bins: {b['type']}"
-          + (f" ({rule['feature']} <= {rule['threshold']} -> low)" if rule["type"] == "two" else ""), ""]
+    md = ["# mithya policy (learned by pramana)", "",
+          f"Selector: {sel['name']} ({sel['file']}), model {json.dumps(sel['model'])}"
+          + (f"; held-out score lofo {sel.get('lofo')}, val {sel.get('val')}" if sel.get("lofo") is not None else ""),
+          f"Default policy (selector fails / unknown pick): {default}", ""]
+    keys = {a: p.get("key") for a, p in ((kb.get("selector") or {}).get("policies") or {}).items()}
     for k, ss in pols.items():
-        md.append(f"## bin {k}")
+        md.append(f"## policy {k}" + (f" ({keys[k]})" if keys.get(k) else ""))
         md += [f"- [{s['mode']}] {s['name']}: `{'; '.join(s['tcl'])}`" for s in ss]
     for x in by_budget:
         md.append(f"## budget >= {x['rel_budget']} x route Explore time (LOFO {x['lofo']})")
         md += [f"- [{s['mode']}] {s['name']}" for s in x["steps"]]
     md += ["", "## extra actions (if budget remains)"]
     md += [f"- [{s['mode']}] {s['name']}" for s in extra]
-    md += ["", f"Out of training range: bin {default_bin}'s steps, all as candidates."]
     (mith / "POLICY.md").write_text("\n".join(md) + "\n")
     return policy
+
+
+def check_selector(c: Campaign, kb: dict, mith: Path, log=print) -> None:
+    """Emit check: the bundle's selector, run from the bundle, makes on every training design
+    the pick distill recorded."""
+    want = (kb.get("selector") or {}).get("train_picks")
+    if not want:
+        return
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("pramana_emit_selector", mith / "selector.py")
+    sel = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sel)
+    pol = json.loads((mith / "policy.json").read_text())
+    s = pol["selector"]
+    bad = []
+    for did, pick in want.items():
+        r = extract_reports(c, did)
+        got = (sel.predict(mith / s["file"], s["model"], r, c.features(did), pol["policies"]) or [None])[0]
+        if got != pick:
+            bad.append(did)
+    if bad:
+        raise SystemExit(f"emit: bundled selector {s['name']} picks differently on {bad}")
+    log(f"[compile] selector {s['name']}: same picks as in training on {len(want)} designs")
+
+
+def extract_reports(c: Campaign, did: str) -> dict:
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("pramana_emit_extract",
+                                                  REPO / "pramana" / "mithya_shim" / "extract.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m.load_reports(c.profile_dir(did), profile_ext.ext_dir(c.cfg, c.design(did)))
 
 
 def run(c: Campaign, log=print) -> None:
@@ -458,6 +393,7 @@ def run(c: Campaign, log=print) -> None:
     (maya / "recipes.tcl").write_text(recipes_tcl(kb, b))
     (maya / "knowledge.json").write_text(json.dumps(kb, indent=1, sort_keys=True))
     write_mithya(kb, b, mith)
+    check_selector(c, kb, mith, log)
     from . import adapters
     written = adapters.write_all(kb, b, out / "adapters")
     log(f"[compile] maya -> {maya}, mithya -> {mith}, adapters -> {sorted(written)} (bins={b['type']})")
@@ -469,4 +405,4 @@ if __name__ == "__main__":
     import sys
     _kb = json.loads(Path(sys.argv[1]).read_text())
     _p = write_mithya(_kb, bins(_kb), Path(sys.argv[2]))
-    print(f"mithya bundle -> {sys.argv[2]} (bins={_p['bin_rule']['type']})")
+    print(f"mithya bundle -> {sys.argv[2]} (selector={_p['selector']['name']})")

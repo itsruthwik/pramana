@@ -16,18 +16,20 @@ import json
 import sys
 from pathlib import Path
 
+from . import profile_ext
 from .campaign import Campaign
 from .config import Config
 
-BUNDLE_MODULES = ("protocol", "policy", "classify", "recipes", "executor", "features")
+BUNDLE_MODULES = ("protocol", "policy", "extract", "selector", "classify", "recipes",
+                  "executor", "features", "measure")
 
 
 def load_bundle(mdir: Path) -> dict:
     """Import a mithya bundle's modules (they import each other by bare name) without leaving
     them in sys.modules, so several bundles can be loaded in one process."""
     mdir = Path(mdir).resolve()
-    if not (mdir / "executor.py").exists():
-        raise SystemExit(f"{mdir}: old-format bundle (no executor.py); re-run compile, or "
+    if not (mdir / "selector.py").exists():
+        raise SystemExit(f"{mdir}: old-format bundle (no selector.py); re-run compile, or "
                          f"python -m pramana.compile <kb.json> {mdir}")
     for n in BUNDLE_MODULES:
         sys.modules.pop(n, None)
@@ -48,15 +50,18 @@ def run(train: Campaign, ev: Campaign, budget_s: float = 3000, log=print,
     mdir = Path(bundle) if bundle else train.root / "out" / "mithya"
     label = label or train.cfg.name
     m = load_bundle(mdir)
-    feats_mod, cls, rec_mod, ex, proto = (m["features"], m["classify"], m["recipes"],
-                                          m["executor"], m["protocol"])
+    meas, cls, rec_mod, ex, proto = (m["measure"], m["classify"], m["recipes"],
+                                     m["executor"], m["protocol"])
+    # the selector reads the extended profile's reports
+    profile_ext.run(ev.cfg, [d for d in ev.designs() if not designs or d["id"] in designs], log=log)
     jobs, plan = [], {}
     for d in ev.designs():
         did = d["id"]
         if designs and did not in designs:
             continue
-        f = feats_mod.from_profile(ev.profile_dir(did))
-        b = cls.classify(f)
+        edir = profile_ext.ext_dir(ev.cfg, d)
+        f = meas.design_features(ev.profile_dir(did), edir)
+        b = cls.choose_policy(ev.profile_dir(did), edir, f)
         prims = (ev.profile(did)["input"] or {}).get("prims")
         steps = rec_mod.sequence_for(b, budget_s, prims)
         plan[did] = {"bin": b, "steps": [(s.name, s.mode, round(s.est_secs)) for s in steps]}

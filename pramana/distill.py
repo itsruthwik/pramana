@@ -15,7 +15,7 @@ import statistics
 import time
 from collections import defaultdict
 
-from . import funccheck, llm
+from . import funccheck, llm, profile_ext, ship, strategy
 from .campaign import Campaign
 from .features import FEATURE_DOC, rule_features
 from .logparse import pass_effects
@@ -320,12 +320,15 @@ def policies(c: Campaign, rng: random.Random) -> dict:
     }
     if two and two[0][0] > one_lofo + 0.02:
         best_s, fn = two[0]
+        # null: shuffle which design has which feature row and take the best split over ALL
+        # features, as the real split was selected among all of them
+        usable = [x for _, x in two]
         null = []
         for _ in range(60):
-            vals = [feats[d][fn] for d in designs]
-            rng.shuffle(vals)
-            fv = {d: {fn: v} for d, v in zip(designs, vals)}
-            null.append(lofo_two(designs, fn, fv))
+            rows = [feats[d] for d in designs]
+            rng.shuffle(rows)
+            fv = dict(zip(designs, rows))
+            null.append(max(lofo_two(designs, x, fv) for x in usable))
         p = (1 + sum(1 for x in null if x >= best_s)) / (1 + len(null))
         fit = fit_two(designs, fn, feats)
         result["two_bin"] = {"feature": fn, "threshold": round(fit[1], 4),
@@ -747,12 +750,18 @@ def run(c: Campaign, log=print) -> dict:
     fam = _families(c)
     acts = action_profiles(c)
     log(f"[distill] {len(acts)} action profiles")
+    profile_ext.run(c.cfg, c.designs(), log=log)                                  # S7a
     conds = conditions(c, acts, rng)
     log(f"[distill] conditions: {sum(1 for x in conds if x['status'] == 'condition')} accepted "
         f"of {len(conds)} tested")
     pol = policies(c, rng)
     log(f"[distill] policies: bins={pol.get('bins')} one-bin LOFO "
         f"{(pol.get('one_bin') or {}).get('lofo_frac_of_oracle')}")
+    sel = None
+    M, pols_all = policy_matrix(c)
+    sdesigns = [d for d in fam if M and all(d in row for row in M.values())]
+    if len(sdesigns) >= 3:                                                        # S7b selector
+        sel = strategy.run(c, M, {d: _oracle(c, d) for d in sdesigns}, pols_all, sdesigns, log=log)
     pol["portfolio"] = placement_portfolio(c)
     log(f"[distill] placement portfolio: {pol['portfolio'].get('chains') or pol['portfolio'].get('status')}"
         f" (score by size {pol['portfolio'].get('score_by_k')})")
@@ -790,13 +799,14 @@ def run(c: Campaign, log=print) -> dict:
                  "designs": sorted(fam), "families": sorted(set(fam.values())),
                  "created": time.strftime("%Y-%m-%d %H:%M:%S"),
                  "n_runs": len(c.results()), "unit": "dWNS ns vs start state; MHz display only"},
-        "feature_definitions": FEATURE_DOC, "feature_ranges": ranges,
+        "feature_definitions": FEATURE_DOC, "feature_ranges": ranges, "selector": sel,
         "design_features": feats,
         "actions": acts, "conditions": conds, "policies": pol, "interactions": inter,
         "pruning": pr, "negative": negative, "signals": sig, "recipes": rec,
         "hypotheses": hyps, "cost_model": cost_model(c),
         "llm_spend": llm.spend(c.cfg),
     }
+    kb["ship"] = ship.decide(kb)       # every shipping decision, so emit only formats
     kb["notes"] = mechanism_notes(c, kb)
     kd = c.root / "kb"
     kd.mkdir(exist_ok=True)

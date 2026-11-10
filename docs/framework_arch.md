@@ -34,7 +34,7 @@ LLM decided).
 ```
 FRAMEWORK (once; pramana prepare)          CAMPAIGN (pramana all <campaign>)
   S0 space + probe  per (Vivado, part)        S3 prune ─▶ S4 search (rounds) ─▶ S5 discover
-  S1 profile        per DCP                   ─▶ S6 confirm ─▶ S7 distill ─▶ S8 compile
+  S1 profile        per DCP                   ─▶ S6 confirm ─▶ S7 distill (profile_ext, learn, emit)
   S2 reference runs per DCP                          ▲                     │
        │                                             └──── draft KB ◀──────┘ (every round)
        └──────────── read by every campaign ──────────┘
@@ -202,9 +202,25 @@ edited the netlist directly.
 and fills the design × policy matrix the policy and bin choices are made from. Only new
 design × policy pairs run, so adding a design costs about 2n runs, not n².
 
-### S7 — Distill
+### S7 — Distill (learn + emit)
 
-**What.** Code computes every number in the KB from the results database:
+One stage with three substeps: **S7a** extended profile, **S7b** learn, **S7c** emit.
+
+**S7a.** A second read-only Vivado session per design (`pramana/profile_ext.py`) writes 26
+more reports (hierarchical utilization and timing, hold paths, CDC, clock interaction, power,
+methodology, DRC, ...) plus 1000 setup and 200 hold paths to `<dcp>/vivado_<ver>/profile_ext/`.
+It runs only here, so S0–S6 are unchanged; the same Tcl ships to mithya as `profile_ext.tcl`.
+
+**S7b, strategy selector** (`pramana/strategy.py`). The 8 best policies by mean fraction of
+oracle are candidates. Besides two built-ins (one bin; a one-feature stump), an LLM writes 4
+selectors, each a Python file with `fit(train) -> model` and `predict(model, reports,
+features) -> ranked policies`, free to use any report, a feature, a PCA component, nearest
+neighbours or anything else. Each selector is scored leave-one-family-out on the training
+designs and on a separate validation campaign (the 8 candidate chains run on its designs).
+One ships only if it beats one bin on both; otherwise one bin ships. Test designs are never
+seen by pramana.
+
+**S7b, the rest.** Code computes every number in the KB from the results database:
 - action profiles: effect distribution (ΔWNS ns), P(gain), P(regression), validity, relative
   cost, effect from an improved state; ship mode plain only if it never regressed on ≥3
   designs, otherwise keep-if-better;
@@ -228,17 +244,17 @@ Crashes (infrastructure kills) are excluded; only completed runs are evidence.
 **Why.** PACT and LATCH lost most of their gain on held-out designs because their knowledge
 wasn't checked this way.
 
-### S8 — Compile
+### S7c — Emit
 
-The same KB compiles to:
+Pure formatting, no decisions (`ship.decide` makes them in S7b). The same KB emits:
 - **LLM-based flow (maya):** `context.md` (labelled prior; no `{`/`}` because maya formats
   with `str.format`), `recipes.tcl`, `knowledge.json`.
-- **Deterministic flow (mithya):** `features.py`, `profile.tcl`, `classify.py`
-  (`classify(features) -> bin`, abstains outside the training range), `recipes.py`
-  (`sequence_for(bin, budget_s, prims) -> [Step]`, each step plain or keep-if-better; picks
-  the policy for the budget, then extra single actions ranked by their measured gain after a
-  re-placed state, dropping ones that interfere or add nothing there),
-  `policy.json`, `POLICY.md`.
+- **Deterministic flow (mithya):** a fixed shim (`pramana/mithya_shim/`, the same for every
+  KB) plus what was learned: `policy.json` (candidate policies with step order, Tcl and
+  committed/candidate mode, default policy, the selector's name and fitted model, extra
+  actions, budget policies, cost model) and `selectors/<name>.py`; `profile.tcl` and
+  `profile_ext.tcl` measure a new design. Emit checks that the bundle's selector reproduces
+  the KB's picks on the training designs.
 
 ## Evaluation
 
@@ -247,7 +263,7 @@ compiled sequence in one Vivado session with each step kept only if WNS improves
 compared with the design's reference runs, singly and as best-of-all at their total time.
 
 **Sequential training** (`pramana.sequential`). Designs are added one at a time. For design n:
-evaluate KB(n−1) on it (out-of-sample; runs alongside training), train on it (S3–S8, with
+evaluate KB(n−1) on it (out-of-sample; runs alongside training), train on it (S3–S7, with
 the analyst seeing the draft KB of designs 1…n−1), snapshot KB(n), evaluate KB(n) on it, and
 every few steps evaluate KB(n) on a held-out campaign. The out-of-sample score against n shows
 when more training stops helping; a second design order checks that the answer doesn't depend

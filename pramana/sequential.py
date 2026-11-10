@@ -28,7 +28,7 @@ from .campaign import Campaign
 from .cli import PREPARE, log_to, stage
 from .config import Config
 
-TRAIN = ["prune", "search", "discover", "confirm", "distill", "compile"]
+TRAIN = ["prune", "search", "discover", "confirm", "distill"]
 
 
 def _ensure(name: str, base: Config | None = None, **kw) -> Config:
@@ -178,7 +178,7 @@ def run(exp: str, heldout: str, order: list[str], heldout_every: int = 3,
             stage(s, Config.load(exp), log)
         _parallel(lambda: stage("discover", Config.load(exp), log),
                   lambda: stage("confirm", Config.load(exp), log))
-        for s in ("distill", "compile"):
+        for s in ("distill",):
             stage(s, Config.load(exp), log)
         bundle = snapshot(Config.load(exp), n)
         train = Campaign(Config.load(exp))

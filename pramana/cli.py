@@ -9,11 +9,13 @@
   python -m pramana search <campaign>       S4  rounds (re-prune, allocate, run, settle)
   python -m pramana discover <campaign>     S5  (LLM agent) custom Tcl per design
   python -m pramana confirm <campaign>      S6
-  python -m pramana distill <campaign>      S7
-  python -m pramana compile <campaign>      S8
+  python -m pramana distill <campaign>      S7  learn and emit: (a) extended profile,
+                                            (b) learn kb.json incl. learned features and
+                                            every shipping decision, (c) emit the bundles
+  python -m pramana compile <campaign>      S7c only: re-emit the bundles from kb.json
   python -m pramana prepare <campaign>      space, profile, probe, baseline into the framework
                                             store (skips what is already there)
-  python -m pramana all <campaign>          S0..S8
+  python -m pramana all <campaign>          S0..S7
   python -m pramana status <campaign>
 """
 from __future__ import annotations
@@ -93,9 +95,10 @@ def stage(name: str, cfg: Config, log) -> None:
     elif name == "confirm":
         from . import confirm
         confirm.run(c, log=log)
-    elif name == "distill":
-        from . import distill
+    elif name == "distill":                 # S7: (a) extended profile + (b) learn, (c) emit
+        from . import compile as comp, distill
         distill.run(c, log=log)
+        comp.run(c, log=log)
     elif name == "compile":
         from . import compile as comp
         comp.run(c, log=log)
@@ -107,7 +110,7 @@ def stage(name: str, cfg: Config, log) -> None:
     if name in ("prune", "search", "discover", "distill"):   # the stages that call the LLM
         from . import llm
         log(llm.spend_line(cfg))
-    if name == "compile":
+    if name in ("distill", "compile"):
         log(time_line(cfg))
 
 
@@ -132,7 +135,7 @@ def time_line(cfg: Config) -> str:
 
 PREPARE = ["space", "profile", "probe", "baseline"]   # framework-level, done once per DCP
 ALL = ["space", "profile", "probe", "baseline", "prune", "search", "discover", "confirm",
-       "distill", "compile"]
+       "distill"]
 
 
 def main(argv=None) -> None:

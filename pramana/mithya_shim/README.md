@@ -2,14 +2,17 @@
 
 A fixed executor for a pramana-trained policy. It holds no knowledge about Vivado or designs:
 
-- `policy.json` (written by pramana's compile stage) holds everything learned: the bin rule
-  (feature and threshold), the training feature ranges, the per-bin step lists with their
-  order, Tcl and mode (committed / candidate), the extra actions, the budget-dependent
-  policies and the runtime cost model.
-- `protocol.py` holds the fixed run protocol: range margin, default step estimate, step limit,
-  grace period and the out-of-range rule. These are the same for every policy and are not
-  learned.
-- `classify.py`, `recipes.py`, `executor.py`, `ladder.py` interpret `policy.json` under that
-  protocol. `kib.tcl` is the keep-if-better Tcl. `features.py` and `profile.tcl` measure a design.
+- `policy.json` (written by pramana's S7) holds everything learned: the candidate policies
+  (each a list of steps with order, Tcl and mode committed / candidate), the default policy,
+  the strategy selector (its code file and fitted model), the extra actions, the
+  budget-dependent policies and the runtime cost model.
+- `selectors/<name>.py` is the selector pramana's LLM wrote and pramana validated:
+  `predict(model, reports, features)` ranks the policies for a design.
+- `protocol.py` holds the fixed run protocol: default step estimate, step limit, grace period
+  and what to do when the selector fails. Not learned; the same for every policy.
+- `classify.py` (choose_policy), `recipes.py`, `executor.py`, `ladder.py` interpret
+  `policy.json` under that protocol; `selector.py` and `extract.py` load and run the
+  selector on the reports of `profile.tcl` and `profile_ext.tcl`; `features.py` computes the
+  base features. `kib.tcl` is the keep-if-better Tcl.
 
-These files are the same for every trained bundle; only `policy.json` changes.
+These files are the same for every trained bundle; only `policy.json` and `selectors/` change.

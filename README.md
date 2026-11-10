@@ -26,12 +26,16 @@ Campaign-level (`pramana all <campaign>` runs prepare first, then these):
 | S4 | `search` | rounds: bandit + hypothesis tests + audits, re-prune, checkpoint report |
 | S5 | `discover` | Claude Code agent writes custom Tcl recipes per design |
 | S6 | `confirm` | replay best chains from scratch; transfer to every other design |
-| S7 | `distill` | KB with LOFO-checked conditions, policies, bins, pruning rules |
-| S8 | `compile` | `out/maya/` and `out/mithya/` bundles |
+| S7 | `distill` | S7a extended profile (26 more reports per design), S7b learn (KB: actions, policies, LLM-written strategy selectors scored by LOFO and on a validation campaign), S7c emit (`out/maya/`, `out/mithya/`, adapters) |
+
+`python3 -m pramana compile <c>` (or `python3 -m pramana.compile <kb.json> <dir>`) re-emits
+bundles from a saved KB without relearning. A validation campaign (`val_campaign` in
+`campaign.json`, e.g. `val6` from `scripts/split_val.py`: 6 designs from the 119 not in the
+45, no test families) is used only to choose the selector; without one, one bin ships.
 
 ```bash
 python3 -m pramana init dev1 --designs vexriscv_re-place,amd_mini-isp --workers 8
-python3 -m pramana all dev1                    # S0..S8
+python3 -m pramana all dev1                    # S0..S7
 python3 -m pramana status dev1
 python3 -m pramana.evaluate dev1 eval1 3000     # apply the mithya bundle to eval1's designs
 scripts/chain.sh dev1 eval1                    # all of the above, unattended

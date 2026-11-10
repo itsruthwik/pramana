@@ -40,6 +40,7 @@ class Config:
     # system prompt instead of an interactive session: no Claude Code system prompt or tool
     # definitions, no file round-trips. Agents (discover) stay interactive.
     claude_print: bool = False
+    val_campaign: str = ""          # validation designs for choosing the strategy selector (S7b)
     critic: bool = True
     # search budget
     rounds: int = 4
