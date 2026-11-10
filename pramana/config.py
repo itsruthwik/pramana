@@ -36,6 +36,10 @@ class Config:
     # Codex: use a model id "codex:<model>" (e.g. "codex:gpt-6.1-terra") in llm_model or
     # analysts. Codex's own sandbox (bwrap) fails inside Slurm jobs, hence full access.
     codex_sandbox: str = "danger-full-access"
+    # Structured answers (analyst, critic, notes) through `claude -p` with no tools and a short
+    # system prompt instead of an interactive session: no Claude Code system prompt or tool
+    # definitions, no file round-trips. Agents (discover) stay interactive.
+    claude_print: bool = False
     critic: bool = True
     # search budget
     rounds: int = 4

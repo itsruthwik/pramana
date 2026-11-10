@@ -89,6 +89,25 @@ def ask(cfg: Config, stage: str, name: str, prompt: str, schema: dict,
     base = d / f"{name}_{ts}"
     _sfx(base, ".prompt.md").write_text(prompt)
     cwd = d / "sessions" / (key or name)
+    m = model or cfg.llm_model
+    if cfg.claude_print and not m.startswith(session.CODEX):
+        rec, so = {}, None
+        for attempt in range(retries + 1):
+            rec = session.run_print(cfg, stage, name, prompt, cwd, schema, key=key,
+                                    system=system, timeout_s=timeout_s, model=m)
+            rec["attempt"] = attempt
+            so = rec.pop("structured_output")
+            if so is not None:
+                try:
+                    validate(so, schema)
+                    break
+                except ValidationError as e:
+                    rec["status"], rec["problem"], so = "invalid", e.message[:300], None
+        rec["structured_output"] = so
+        _sfx(base, ".response.json").write_text(json.dumps(rec, indent=1))
+        if so is None:
+            _sfx(base, ".failed.txt").write_text(f"{rec.get('status')}: {rec.get('problem')}")
+        return so
     ans = cwd / f"{name}_answer.json"
     task = (prompt + "\n\n## Output\nWrite your answer as one JSON object to the file "
             f"`{ans.name}` in the current directory. It must validate against this JSON "
@@ -155,11 +174,12 @@ def agent(cfg: Config, stage: str, name: str, prompt: str, cwd: Path,
 
 
 # API list prices, $ per million tokens: (input, output, cache read, cache write).
-# Cache writes assume the 5-minute cache (1.25x input). Sessions run on the subscription, so
+# Cache writes at the 1-hour rate (2x input): Claude Code writes 1-hour cache entries.
+# Calls that report their own cost (claude -p, headless) use that figure instead. Sessions run on the subscription, so
 # this is what the same tokens would cost on the API, not a bill.
-PRICES = {"claude-sonnet-5-5": (2.0, 10.0, 0.20, 2.50),
-          "claude-opus-5-5": (4.0, 20.0, 0.20, 5.00),
-          "claude-haiku-5-5": (0.10, 0.50, 0.01, 0.125),
+PRICES = {"claude-sonnet-5-5": (2.0, 10.0, 0.20, 4.00),
+          "claude-opus-5-5": (4.0, 20.0, 0.20, 8.00),
+          "claude-haiku-5-5": (0.10, 0.50, 0.01, 0.20),
           "gpt-6.1-terra": (1.0, 5.0, 0.05, 1.0)}     # Codex: no separate cache-write charge
 TOKEN_KEYS = ("input_tokens", "output_tokens", "cache_read_input_tokens",
               "cache_creation_input_tokens", "assistant_turns")
@@ -198,12 +218,13 @@ def spend(cfg: Config) -> dict:
             for k in TOKEN_KEYS:
                 s[k] += u.get(k) or 0
             p = PRICES.get((r.get("model") or cfg.llm_model).removeprefix("codex:"))
-            if p:
+            if r.get("cost_usd") is not None:
+                s["est_usd"] += r["cost_usd"]                # the tool's own figure
+            elif p:
                 s["est_usd"] += ((u.get("input_tokens") or 0) * p[0]
                                  + (u.get("output_tokens") or 0) * p[1]
                                  + (u.get("cache_read_input_tokens") or 0) * p[2]
                                  + (u.get("cache_creation_input_tokens") or 0) * p[3]) / 1e6
-            s["est_usd"] += r.get("cost_usd") or 0.0     # headless-era records only
     for s in out.values():
         s["est_usd"] = round(s["est_usd"], 2)
     return out

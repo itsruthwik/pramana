@@ -270,6 +270,65 @@ def run_codex(cfg: Config, stage: str, name: str, task: str, cwd: Path,
     return rec
 
 
+def run_print(cfg: Config, stage: str, name: str, task: str, cwd: Path, schema: dict,
+              key: str | None = None, system: str | None = None, timeout_s: float = 1800,
+              model: str | None = None) -> dict:
+    """One structured answer from `claude -p` (print mode), run inside tmux like the others:
+    no tools, `system` as the whole system prompt, --json-schema for the answer, resumes the
+    session of `key`. Returns a record with `structured_output` (None on failure), per-call
+    usage and Claude's own cost figure."""
+    model = model or cfg.llm_model
+    cwd = Path(cwd).resolve()
+    cwd.mkdir(parents=True, exist_ok=True)
+    stem = Path(name).name
+    (cwd / f"{stem}_task.md").write_text(task)
+    out = cwd / f"{stem}.print.json"
+    out.unlink(missing_ok=True)
+    store = SessionStore(cfg)
+    sid = store.get(key) if key else None
+    resume = sid is not None and not sid.startswith(CODEX) and transcript(sid) is not None
+    if not resume:
+        sid = str(uuid.uuid4())
+        if key:
+            store.put(key, sid)
+    cmd = ["claude", "-p", "--model", model, "--effort", cfg.llm_effort, "--tools", "",
+           "--strict-mcp-config", "--output-format", "json", "--json-schema", json.dumps(schema),
+           "--system-prompt", system or "You are a careful expert. Answer only from the given material."]
+    cmd += ["--resume", sid] if resume else ["--session-id", sid]
+    tname = re.sub(r"[^A-Za-z0-9_-]", "_", f"pr-{cfg.name}-{stage}-{name}")[:80]
+    if _alive(tname):
+        _tmux("kill-session", "-t", tname)
+    shell = " ".join(_q(x) for x in cmd) + f" < {_q(stem + '_task.md')} > {_q(out.name)} 2>&1"
+    _tmux("new-session", "-d", "-s", tname, "-c", str(cwd), shell, check=True)
+    t0 = time.time()
+    while _alive(tname) and time.time() - t0 < timeout_s:
+        time.sleep(2)
+    status = "ok"
+    if _alive(tname):
+        _tmux("kill-session", "-t", tname)
+        status = "timeout"
+    res = {}
+    try:
+        res = json.loads(out.read_text())
+    except (OSError, json.JSONDecodeError):
+        status = status if status != "ok" else "bad_output"
+    u = res.get("usage") or {}
+    so = res.get("structured_output")
+    if status == "ok" and (res.get("is_error") or so is None):
+        status = "error"
+    return {"stage": stage, "name": name, "session_id": sid, "tmux": tname, "resumed": resume,
+            "status": status, "problem": None if status == "ok" else (res.get("result") or "")[:300],
+            "nudges": 0, "model": model, "effort": cfg.llm_effort, "mode": "print",
+            "duration_s": round(time.time() - t0, 1),
+            "usage": {"input_tokens": u.get("input_tokens") or 0,
+                      "output_tokens": u.get("output_tokens") or 0,
+                      "cache_read_input_tokens": u.get("cache_read_input_tokens") or 0,
+                      "cache_creation_input_tokens": u.get("cache_creation_input_tokens") or 0,
+                      "assistant_turns": res.get("num_turns") or 0},
+            "usage_per_call": True, "cost_usd": res.get("total_cost_usd"),
+            "structured_output": so, "cwd": str(cwd)}
+
+
 def codex_usage(log: Path) -> dict:
     """Token totals from `codex exec --json` output, in the same keys as usage(). Codex
     reports input including cached; cached input is counted as a cache read."""
