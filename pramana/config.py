@@ -33,6 +33,9 @@ class Config:
     # analysts per design per prune (model ids; empty = [llm_model]). Several give independent
     # opinions that are merged by vote; the critic checks the merged answer against the evidence
     analysts: list[str] = field(default_factory=list)
+    # Codex: use a model id "codex:<model>" (e.g. "codex:gpt-6.1-terra") in llm_model or
+    # analysts. Codex's own sandbox (bwrap) fails inside Slurm jobs, hence full access.
+    codex_sandbox: str = "danger-full-access"
     critic: bool = True
     # search budget
     rounds: int = 4

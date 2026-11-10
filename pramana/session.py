@@ -14,7 +14,9 @@ session writes. pramana waits until the file exists and validates, then closes t
 from __future__ import annotations
 
 import json
+import os
 import re
+import signal
 import subprocess
 import threading
 import time
@@ -42,8 +44,17 @@ def _pane(name: str) -> str:
     return _tmux("capture-pane", "-p", "-t", name).stdout
 
 
+CODEX = "codex:"          # model prefix that selects Codex, e.g. "codex:gpt-6.1-terra"
+CODEX_BIN = str(Path.home() / ".local" / "bin" / "codex")
+
+
 def transcript(sid: str) -> Path | None:
-    hits = list((Path.home() / ".claude" / "projects").glob(f"*/{sid}.jsonl"))
+    """The saved session file: ~/.claude/projects/*/<id>.jsonl, or for Codex ids (stored with
+    the "codex:" prefix) ~/.codex/sessions/YYYY/MM/DD/rollout-*-<id>.jsonl."""
+    if sid.startswith(CODEX):
+        hits = list((Path.home() / ".codex" / "sessions").glob(f"*/*/*/rollout-*-{sid[len(CODEX):]}.jsonl"))
+    else:
+        hits = list((Path.home() / ".claude" / "projects").glob(f"*/{sid}.jsonl"))
     return hits[0] if hits else None
 
 
@@ -102,6 +113,11 @@ def run(cfg: Config, stage: str, name: str, task: str, cwd: Path, done: Callable
     what is wrong/missing (sent to the session if it goes idle without finishing).
     Returns a record with session id, status, duration and token usage.
     """
+    model = model or cfg.llm_model
+    if model.startswith(CODEX):
+        return run_codex(cfg, stage, name, task, cwd, done, key=key, system=system,
+                         timeout_s=timeout_s, max_nudges=max_nudges, task_file=task_file,
+                         model=model)
     cwd = Path(cwd).resolve()
     cwd.mkdir(parents=True, exist_ok=True)
     (cwd / task_file).write_text(task)
@@ -116,7 +132,6 @@ def run(cfg: Config, stage: str, name: str, task: str, cwd: Path, done: Callable
     tname = re.sub(r"[^A-Za-z0-9_-]", "_", f"pr-{cfg.name}-{stage}-{name}")[:80]
     if _alive(tname):
         _tmux("kill-session", "-t", tname)
-    model = model or cfg.llm_model
     cmd = ["claude", "--model", model, "--effort", cfg.llm_effort,
            "--allowedTools", *tools, "-n", tname]
     cmd += ["--resume", sid] if resume else ["--session-id", sid]
@@ -165,6 +180,101 @@ def run(cfg: Config, stage: str, name: str, task: str, cwd: Path, done: Callable
            "usage_per_call": True, "cwd": str(cwd)}
     (cwd / f"{Path(task_file).stem}.session.json").write_text(json.dumps(rec, indent=1))
     return rec
+
+
+def run_codex(cfg: Config, stage: str, name: str, task: str, cwd: Path,
+              done: Callable[[], str | None], key: str | None = None,
+              system: str | None = None, timeout_s: float = 3600, max_nudges: int = 3,
+              task_file: str = "task.md", model: str = "") -> dict:
+    """Same protocol as run() with `codex exec` (headless, no tmux). Codex has no tool
+    allow-list or system-prompt flag: the system text goes at the top of the task, and the
+    sandbox is cfg.codex_sandbox (Codex's own sandbox fails inside Slurm jobs, so the default
+    is danger-full-access). If Codex exits without a valid deliverable, the same thread is
+    resumed with what is wrong, up to max_nudges times. Usage is per call from the
+    `turn.completed` events of this call's output."""
+    cwd = Path(cwd).resolve()
+    cwd.mkdir(parents=True, exist_ok=True)
+    store = SessionStore(cfg)
+    sid = store.get(key) if key else None
+    resume = sid is not None and sid.startswith(CODEX) and transcript(sid) is not None
+    if not resume:
+        sid = None
+        if system:
+            task = f"{system}\n\n{task}"
+    (cwd / task_file).write_text(task)
+    log = cwd / f"{Path(task_file).stem}.codex.jsonl"
+    log.write_text("")
+    t0 = time.time()
+
+    def call(prompt: str) -> bool:
+        """One codex exec (resuming `sid` if set); True if it hit the time limit."""
+        nonlocal sid
+        args = ["resume", sid[len(CODEX):]] if sid else []
+        cmd = [CODEX_BIN, "exec", *args, "--json", "--skip-git-repo-check",
+               "-m", model[len(CODEX):], "-c", f"model_reasoning_effort={cfg.llm_effort}",
+               "-c", f'sandbox_mode="{cfg.codex_sandbox}"', prompt]   # resume has no -s
+        start = log.stat().st_size
+        with open(log, "a") as out:
+            p = subprocess.Popen(cmd, cwd=cwd, stdout=out, stderr=subprocess.STDOUT,
+                                 stdin=subprocess.DEVNULL, text=True, start_new_session=True)
+            try:
+                p.wait(timeout=max(1, t0 + timeout_s - time.time()))
+                timed_out = False
+            except subprocess.TimeoutExpired:
+                timed_out = True        # stop codex and everything it started
+                os.killpg(p.pid, signal.SIGTERM)
+                try:
+                    p.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    os.killpg(p.pid, signal.SIGKILL)
+        if sid is None:
+            with open(log) as f:
+                f.seek(start)
+                for ln in f:
+                    try:
+                        tid = json.loads(ln).get("thread_id")
+                    except json.JSONDecodeError:
+                        continue
+                    if tid:
+                        sid = CODEX + tid
+                        if key:
+                            store.put(key, sid)
+                        break
+        return timed_out
+
+    timed_out = call(f"Read {task_file} in the current directory and follow its instructions.")
+    why = done()
+    nudges = 0
+    while why and not timed_out and sid and nudges < max_nudges and time.time() - t0 < timeout_s - 60:
+        nudges += 1
+        timed_out = call(f"Your deliverable is not complete yet: {why} Please finish it now.")
+        why = done()
+    status = "ok" if why is None else ("timeout" if timed_out else "exited")
+    rec = {"stage": stage, "name": name, "session_id": sid, "tmux": None, "resumed": resume,
+           "status": status, "problem": why, "nudges": nudges, "model": model,
+           "effort": cfg.llm_effort, "duration_s": round(time.time() - t0, 1),
+           "usage": codex_usage(log), "usage_per_call": True, "cwd": str(cwd)}
+    (cwd / f"{Path(task_file).stem}.session.json").write_text(json.dumps(rec, indent=1))
+    return rec
+
+
+def codex_usage(log: Path) -> dict:
+    """Token totals from `codex exec --json` output, in the same keys as usage(). Codex
+    reports input including cached; cached input is counted as a cache read."""
+    tot = {k: 0 for k in USAGE_KEYS}
+    for ln in log.read_text(errors="replace").splitlines():
+        try:
+            e = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        if e.get("type") == "turn.completed":
+            u = e.get("usage") or {}
+            cached = u.get("cached_input_tokens") or 0
+            tot["assistant_turns"] += 1
+            tot["input_tokens"] += (u.get("input_tokens") or 0) - cached
+            tot["cache_read_input_tokens"] += cached
+            tot["output_tokens"] += u.get("output_tokens") or 0
+    return tot
 
 
 def _close(tname: str) -> None:

@@ -14,7 +14,9 @@ Conventions used below:
   status, pulse width), write a checkpoint only if WNS improved. Each run gets a directory
   with `run.tcl`, `vivado.log`, `vivado.jou`, `stdout.txt`, `timing_summary.txt`,
   `paths.tsv`, and one row in a `results.jsonl`.
-- LLM calls are regular Claude Code sessions in tmux (`pramana/session.py`). Each call logs
+- LLM calls are regular Claude Code sessions in tmux (`pramana/session.py`), or Codex
+  (`codex exec --json`, headless) when the model id is `codex:<model>`, e.g.
+  `codex:gpt-6.1-terra` in `llm_model` or `analysts`; resumed sessions work the same way. Each call logs
   its prompt and a response record under `C/llm/<stage>/`.
 - The log for every stage is `C/pramana.log` (UTC). Each stage prints `=== name ===` and
   `=== name done in Ns ===`.

@@ -113,7 +113,8 @@ def agent(cfg: Config, stage: str, name: str, prompt: str, cwd: Path,
 # this is what the same tokens would cost on the API, not a bill.
 PRICES = {"claude-sonnet-5-5": (2.0, 10.0, 0.20, 2.50),
           "claude-opus-5-5": (4.0, 20.0, 0.20, 5.00),
-          "claude-haiku-5-5": (0.10, 0.50, 0.01, 0.125)}
+          "claude-haiku-5-5": (0.10, 0.50, 0.01, 0.125),
+          "gpt-6.1-terra": (1.0, 5.0, 0.05, 1.0)}     # Codex: no separate cache-write charge
 TOKEN_KEYS = ("input_tokens", "output_tokens", "cache_read_input_tokens",
               "cache_creation_input_tokens", "assistant_turns")
 
@@ -150,7 +151,7 @@ def spend(cfg: Config) -> dict:
             u = r.get("usage") or {}
             for k in TOKEN_KEYS:
                 s[k] += u.get(k) or 0
-            p = PRICES.get(r.get("model") or cfg.llm_model)
+            p = PRICES.get((r.get("model") or cfg.llm_model).removeprefix("codex:"))
             if p:
                 s["est_usd"] += ((u.get("input_tokens") or 0) * p[0]
                                  + (u.get("output_tokens") or 0) * p[1]
