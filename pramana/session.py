@@ -325,7 +325,9 @@ def run_print(cfg: Config, stage: str, name: str, task: str, cwd: Path, schema: 
                       "cache_read_input_tokens": u.get("cache_read_input_tokens") or 0,
                       "cache_creation_input_tokens": u.get("cache_creation_input_tokens") or 0,
                       "assistant_turns": res.get("num_turns") or 0},
-            "usage_per_call": True, "cost_usd": res.get("total_cost_usd"),
+            # total_cost_usd is the whole session's so far (cumulative on resume), so it is kept
+            # for reference only; spend() prices this call from its usage
+            "usage_per_call": True, "session_cost_usd": res.get("total_cost_usd"),
             "structured_output": so, "cwd": str(cwd)}
 
 

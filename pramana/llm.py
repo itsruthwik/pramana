@@ -175,7 +175,7 @@ def agent(cfg: Config, stage: str, name: str, prompt: str, cwd: Path,
 
 # API list prices, $ per million tokens: (input, output, cache read, cache write).
 # Cache writes at the 1-hour rate (2x input): Claude Code writes 1-hour cache entries.
-# Calls that report their own cost (claude -p, headless) use that figure instead. Sessions run on the subscription, so
+# Old headless-era records carry their own cost_usd, used as is. Sessions run on the subscription, so
 # this is what the same tokens would cost on the API, not a bill.
 PRICES = {"claude-sonnet-5-5": (2.0, 10.0, 0.20, 4.00),
           "claude-opus-5-5": (4.0, 20.0, 0.20, 8.00),
