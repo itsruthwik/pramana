@@ -13,6 +13,9 @@ Each selector is scored twice, on the same per-design score:
   lofo  leave-one-family-out over the training designs (fit without the family, predict it);
   val   fit on all training designs, predict the validation designs (cfg.val_campaign), on
         which every candidate policy has been run (pramana never searches there).
+lofo is in-sample for LLM selectors: the LLM saw every training design's scores when it wrote
+the code, so constants it hard-codes were chosen on the held-out family too. Only val (designs
+the LLM never saw) measures generalisation, which is why shipping needs a val win.
 The shipped selector is the one with the best val score among those that beat ONE_BIN on both
 lofo and val; otherwise ONE_BIN ships.
 """
@@ -30,7 +33,7 @@ from .config import REPO, Config
 
 CAND_K = 8
 N_LLM = 4
-EXCERPT_LINES = 25
+EXCERPT_LINES = 40
 INVALID = -0.05
 
 
@@ -54,7 +57,7 @@ def fit(train):
 
 
 def predict(model, r, f):
-    return [model["policy"]]
+    return model["policy"]
 '''
 
 STUMP = '''"""One base feature and one threshold; the best policy on each side."""
@@ -92,16 +95,16 @@ def fit(train):
 
 
 def predict(model, r, f):
-    """[] (abstain: the default policy, every step a candidate) when the feature is missing
+    """None (abstain: the default policy, every step a candidate) when the feature is missing
     or more than 10% of its training span outside the training range."""
     v = f.get(model["feature"]) if model.get("feature") else None
     if v is None:
-        return [model["fallback"]] if not model.get("feature") else []
+        return model["fallback"] if not model.get("feature") else None
     lo, hi = model.get("range") or (v, v)
     span = (hi - lo) or abs(hi) or 1.0
     if not lo - 0.1 * span <= v <= hi + 0.1 * span:
-        return []
-    return [model["low"] if v <= model["threshold"] else model["high"]]
+        return None
+    return model["low"] if v <= model["threshold"] else model["high"]
 '''
 
 SCHEMA = {
@@ -173,10 +176,26 @@ def validation_table(c: Campaign, pols: dict, cands: list[str], log=print):
 
 
 # --------------------------------------------------------------------------- scoring
-def _fit_predict(sel, path: Path, train: list[dict], test: list[dict], cands: list[str]) -> list:
+class Tracked(dict):
+    """A report dict that records which reports a selector reads."""
+    def __init__(self, d, used):
+        super().__init__(d)
+        self.used = used
+
+    def __getitem__(self, k):
+        self.used.add(k)
+        return super().__getitem__(k)
+
+    def get(self, k, default=None):
+        self.used.add(k)
+        return super().get(k, default)
+
+
+def _fit_predict(sel, path: Path, train: list[dict], test: list[dict], cands: list[str],
+                 used: set | None = None) -> list:
     model = sel.fit(path, train)
-    return model, [(t, (sel.predict(path, model, t["reports"], t["features"], cands) or [None])[0])
-                   for t in test]
+    return model, [(t, sel.predict(path, model, Tracked(t["reports"], used) if used is not None
+                                   else t["reports"], t["features"], cands)) for t in test]
 
 
 def _score(preds: list) -> float:
@@ -196,15 +215,22 @@ def lofo(sel, path: Path, rows: list[dict], cands: list[str]) -> float:
 # --------------------------------------------------------------------------- LLM
 def _prompt(rows: list[dict], pols: dict, cands: list[str]) -> str:
     sample = rows[0]
-    L = [f"Write up to {N_LLM} STRATEGY SELECTORS for Vivado post-route timing closure: given a "
+    L = [f"Write {N_LLM} STRATEGY SELECTORS for Vivado post-route timing closure: given a "
          "new routed design's profile reports, pick which of the candidate policies (command "
          "sequences) to run. Each selector must use a different method, e.g. thresholds on a "
-         "quantity you compute from the reports, principal components of features, nearest "
-         "training designs, a scoring rule per policy. Aim for methods that generalise to "
-         "design families not seen in training (they are tested that way).", "",
-         "Code: Python source defining fit(train) -> model and predict(model, r, f) -> list of "
-         "policy names 'P0', 'P1', ... (best first; [] to abstain: the default policy then runs "
-         "with every step kept only if it helps). train is a list of designs, each {'id', 'family', "
+         "quantity you compute from the reports, principal components, nearest training "
+         "designs, a scoring rule per policy. Aim for methods that generalise to design "
+         "families not seen in training (they are tested that way).", "",
+         "The base features are a small fixed summary. The reports (listed at the end) hold much "
+         "more: per-hierarchy utilization and timing, hold paths, clock interaction, CDC, "
+         "congestion, methodology and DRC findings, power, the worst 1000 setup paths. At least "
+         f"{N_LLM - 1} of your selectors must parse quantities out of the report texts r[...] "
+         "and base their decision on them (alone or with features); say in the method line "
+         "which reports and quantities. Read features by name (f['util_lut']), never by "
+         "position in a list.", "",
+         "Code: Python source defining fit(train) -> model and predict(model, r, f) -> ONE "
+         "policy name 'P0', 'P1', ... (or None to abstain: the default policy then runs with "
+         "every step kept only if it helps). train is a list of designs, each {'id', 'family', "
          "'features': {name: value}, 'reports': {name: text}, 'scores': {policy: fraction of "
          "the best known gain on that design, -1..1}}. model must be JSON-serializable (it is "
          "shipped as data). r is the new design's reports, f its base features. Standard "
@@ -241,7 +267,10 @@ def run(c: Campaign, M: dict, oracle: dict, pols: dict, designs: list[str], log=
     reg = {"one_bin": {"method": "best single policy", "code": ONE_BIN, "builtin": True},
            "stump": {"method": "one base feature, one threshold", "code": STUMP, "builtin": True}}
     out = llm.ask(c.cfg, "distill", "selectors", _prompt(rows, pols, cands), SCHEMA)
-    for p in ((out or {}).get("selectors") or [])[:N_LLM]:
+    got = (out or {}).get("selectors") or []
+    log(f"[strategy] LLM returned {len(got)} selector(s) (asked for {N_LLM})"
+        + ("" if out else "; no valid answer"))
+    for p in got[:N_LLM]:
         name = "llm_" + re.sub(r"[^a-z0-9_]", "_", p["name"].lower()).strip("_")[:40]
         reg[name] = {"method": p["method"], "rationale": p["rationale"], "code": p["code"],
                      "builtin": False}
@@ -259,12 +288,16 @@ def run(c: Campaign, M: dict, oracle: dict, pols: dict, designs: list[str], log=
             s["model"] = model
             s["val"] = round(_score(preds), 4) if vrows else None
             s["val_picks"] = {t["id"]: p for t, p in preds}
-            s["train_picks"] = {t["id"]: p for t, p in _fit_predict(sel, path, rows, rows, names)[1]}
+            used = set()
+            s["train_picks"] = {t["id"]: p for t, p in
+                                _fit_predict(sel, path, rows, rows, names, used)[1]}
+            s["reports_used"] = sorted(used)
             s["status"] = "scored"
         except Exception as e:
-            s.update(status="failed", reason=str(e)[:300], lofo=None, val=None)
-        log(f"[strategy] {name:28s} lofo={s.get('lofo')} val={s.get('val')} "
-            f"{s['status'] if s['status'] != 'scored' else ''}")
+            s.update(status="failed", reason=str(e)[:300], lofo=None, val=None, reports_used=[])
+        log(f"[strategy] {name:32s} lofo={s.get('lofo')} val={s.get('val')} "
+            f"reports={len(s['reports_used'])} {s.get('reason') or ''}"
+            f"{' FAILED' if s['status'] != 'scored' else ''}")
     base = reg["one_bin"]
     ok = [n for n, s in reg.items() if n != "one_bin" and s["status"] == "scored"
           and s["lofo"] > base["lofo"] and s["val"] is not None and s["val"] > base["val"]]
@@ -279,6 +312,8 @@ def run(c: Campaign, M: dict, oracle: dict, pols: dict, designs: list[str], log=
             "default": base["model"]["policy"], "candidates": alias(cands),
             "policies": {a: {"key": k, "chain": pols[k]["chain"], "units": pols[k].get("units")}
                          for a, k in alias(cands).items()},
-            "train_picks": reg[pick]["train_picks"], "val_campaign": c.cfg.val_campaign or None,
+            "train_picks": reg[pick]["train_picks"], "reports_used": reg[pick]["reports_used"],
+            "val_campaign": c.cfg.val_campaign or None,
             "all": {n: {k: s.get(k) for k in ("method", "rationale", "builtin", "status", "reason",
-                                               "lofo", "val", "val_picks")} for n, s in reg.items()}}
+                                               "lofo", "val", "val_picks", "reports_used")}
+                    for n, s in reg.items()}}

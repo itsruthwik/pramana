@@ -3,11 +3,11 @@ fit and score selectors) and by mithya (to choose a strategy for a new design).
 
 A selector is a Python file defining
     fit(train) -> model          (training only; model must be JSON-serializable)
-    predict(model, r, f) -> [policy names, best first]
+    predict(model, r, f) -> policy name (or None to abstain)
 where train is a list of designs, each {"id", "family", "features": {..}, "reports": {..},
 "scores": {policy name: fraction of the best known gain, -1..1}}; r maps report name to text
 (see extract.py: S1 files as '<name>', extended profile as 'ext/<name>') and f is the design's
-base features.
+base features {name: value} (access them by name).
 """
 import json
 from pathlib import Path
@@ -26,14 +26,12 @@ def fit(path, train):
 
 
 def predict(path, model, r, f, policies):
-    """Policies the selector ranks first that exist in `policies`; [] if it fails."""
+    """The policy the selector picks, or None if it fails, abstains or names no known policy."""
     try:
         out = load(path)["predict"](model, r, f)
     except Exception:
-        return []
-    if isinstance(out, str):
-        out = [out]
-    return [p for p in (out or []) if p in policies]
+        return None
+    return out if isinstance(out, str) and out in policies else None
 
 
 def _load_reports(profile_dir, ext_dir):
@@ -46,5 +44,4 @@ def _load_reports(profile_dir, ext_dir):
 
 def choose(path, model, profile_dir, ext_dir, f, policies, default):
     load_reports = _load_reports
-    ranked = predict(path, model, load_reports(profile_dir, ext_dir), f, policies)
-    return ranked[0] if ranked else default
+    return predict(path, model, load_reports(profile_dir, ext_dir), f, policies) or default

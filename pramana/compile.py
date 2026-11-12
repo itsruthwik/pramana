@@ -360,7 +360,7 @@ def check_selector(c: Campaign, kb: dict, mith: Path, log=print) -> None:
     bad = []
     for did, pick in want.items():
         r = extract_reports(c, did)
-        got = (sel.predict(mith / s["file"], s["model"], r, c.features(did), pol["policies"]) or [None])[0]
+        got = sel.predict(mith / s["file"], s["model"], r, c.features(did), pol["policies"])
         if got != pick:
             bad.append(did)
     if bad:

@@ -214,7 +214,7 @@ It runs only here, so S0–S6 are unchanged; the same Tcl ships to mithya as `pr
 **S7b, strategy selector** (`pramana/strategy.py`). The 8 best policies by mean fraction of
 oracle are candidates. Besides two built-ins (one bin; a one-feature stump), an LLM writes 4
 selectors, each a Python file with `fit(train) -> model` and `predict(model, reports,
-features) -> ranked policies`, free to use any report, a feature, a PCA component, nearest
+features) -> one policy`, free to use any report, a feature, a PCA component, nearest
 neighbours or anything else. Each selector is scored leave-one-family-out on the training
 designs and on a separate validation campaign (the 8 candidate chains run on its designs).
 One ships only if it beats one bin on both; otherwise one bin ships. Test designs are never
