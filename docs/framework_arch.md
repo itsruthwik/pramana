@@ -211,8 +211,9 @@ more reports (hierarchical utilization and timing, hold paths, CDC, clock intera
 methodology, DRC, ...) plus 1000 setup and 200 hold paths to `<dcp>/vivado_<ver>/profile_ext/`.
 It runs only here, so S0–S6 are unchanged; the same Tcl ships to mithya as `profile_ext.tcl`.
 
-**S7b, strategy selector** (`pramana/strategy.py`). The 8 best policies by mean fraction of
-oracle are candidates. Besides two built-ins (one bin; a one-feature stump), an LLM writes 4
+**S7b, strategy selector** (`pramana/strategy.py`). Up to 8 candidate policies are chosen to
+cover the designs: the best by mean fraction of oracle, then greedily the one that most raises
+each design's best available score. Besides two built-ins (one bin; a one-feature stump), an LLM writes 4
 selectors, each a Python file with `fit(train) -> model` and `predict(model, reports,
 features, budget) -> one policy` (budget in multiples of the design's route Explore time;
 training rows are design x budget, each policy scored by the best state it reached within it), free to use any report, a feature, a PCA component, nearest

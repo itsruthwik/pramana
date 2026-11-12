@@ -1,10 +1,11 @@
 """S7b (part): the strategy selector, how a new DCP is matched to a strategy.
 
 Candidates: the policies (chains) measured on every training design (the S6 policy matrix),
-the CAND_K best by mean score. A design's score for a policy is its gain as a fraction of the
+up to CAND_K chosen to cover the designs (the best by mean score, then greedily the one that
+most raises each design's best available score). A design's score for a policy is its gain as a fraction of the
 best gain known on that design (distill._frac, -1..1).
 
-Selectors are code with fit(train) and predict(model, reports, features) (see
+Selectors are code with fit(train) and predict(model, reports, features, budget) (see
 pramana/mithya_shim/selector.py). Two are built in (ONE_BIN: the best single policy; STUMP:
 one base feature, one threshold, a policy per side); the LLM proposes up to N_LLM more, any
 method (rules on report-derived quantities, principal components, nearest neighbours, ...).
@@ -125,9 +126,24 @@ def _frac(g: float, o: float) -> float:
 
 # --------------------------------------------------------------------------- data
 def candidates(M: dict, designs: list[str], oracle: dict) -> list[str]:
+    """Up to CAND_K policies that together cover the designs: first the best by mean score, then
+    greedily the one that most raises the mean over designs of the best score among those chosen
+    (stops early when no policy raises it)."""
     full = [k for k, row in M.items() if all(d in row for d in designs)]
-    mean = {k: statistics.mean(_frac(M[k][d], oracle[d]) for d in designs) for k in full}
-    return sorted(full, key=lambda k: (-mean[k], k))[:CAND_K]
+    S = {k: {d: _frac(M[k][d], oracle[d]) for d in designs} for k in full}
+    if not full:
+        return []
+    out = [max(sorted(full), key=lambda k: statistics.mean(S[k].values()))]
+    best = dict(S[out[0]])
+    while len(out) < CAND_K:
+        gain = {k: statistics.mean(max(best[d], S[k][d]) for d in designs) - statistics.mean(best.values())
+                for k in full if k not in out}
+        k = max(sorted(gain), key=gain.get, default=None)
+        if k is None or gain[k] <= 1e-4:
+            break
+        out.append(k)
+        best = {d: max(best[d], S[k][d]) for d in designs}
+    return out
 
 
 def alias(cands: list[str]) -> dict[str, str]:
