@@ -250,8 +250,8 @@ Pure formatting, no decisions (`ship.decide` makes them in S7b). The same KB emi
   with `str.format`), `recipes.tcl`, `knowledge.json`.
 - **Deterministic flow (mithya):** a fixed shim (`pramana/mithya_shim/`, the same for every
   KB) plus what was learned: `policy.json` (candidate policies with step order, Tcl and
-  committed/candidate mode, default policy, the selector's name and fitted model, extra
-  actions, cost model) and `selectors/<name>.py`; `profile.tcl` and
+  committed/candidate mode, default policy, the selector's name and fitted model,
+  cost model; leftover budget runs the other candidates in P order, each keep-if-better) and `selectors/<name>.py`; `profile.tcl` and
   `profile_ext.tcl` measure a new design. Emit checks that the bundle's selector reproduces
   the KB's picks on the training designs.
 

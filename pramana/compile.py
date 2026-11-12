@@ -301,7 +301,6 @@ def write_mithya(kb: dict, b: dict, mith: Path) -> dict:
         + "".join(tcl.safe_report(n, cmd) for n, cmd in prof_mod.REPORTS))
     sh = ship.decide(kb)       # kb["ship"] when distill made it (legacy KBs: computed here)
     pols, default, sel = sh["policies"], sh["default_policy"], sh["selector"]
-    extra = sh["extra_actions"]
     sd = mith / "selectors"
     if sd.exists():
         shutil.rmtree(sd)
@@ -315,7 +314,7 @@ def write_mithya(kb: dict, b: dict, mith: Path) -> dict:
         "# to an output dir; the selector reads these reports with profile.tcl's (extract.py).\n"
         + tcl.MEASURE_PROCS + profile_ext.body())
     policy = {"selector": {k: sel[k] for k in ("name", "file", "model")},
-              "default_policy": default, "policies": pols, "extra_actions": extra,
+              "default_policy": default, "policies": pols,
               "cost_model": kb["cost_model"],
               "feature_ranges": kb["feature_ranges"], "kb_meta": kb["meta"],
               "selector_scores": {k: sel.get(k) for k in ("lofo", "val")}}
@@ -328,8 +327,8 @@ def write_mithya(kb: dict, b: dict, mith: Path) -> dict:
     for k, ss in pols.items():
         md.append(f"## policy {k}" + (f" ({keys[k]})" if keys.get(k) else ""))
         md += [f"- [{s['mode']}] {s['name']}: `{'; '.join(s['tcl'])}`" for s in ss]
-    md += ["", "## extra actions (if budget remains)"]
-    md += [f"- [{s['mode']}] {s['name']}" for s in extra]
+    md += ["", "If budget remains after the chosen policy, the other policies run in P order, "
+           "each whole and kept only if it improves WNS."]
     (mith / "POLICY.md").write_text("\n".join(md) + "\n")
     return policy
 

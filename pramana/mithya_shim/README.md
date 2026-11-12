@@ -4,8 +4,9 @@ A fixed executor for a pramana-trained policy. It holds no knowledge about Vivad
 
 - `policy.json` (written by pramana's S7) holds everything learned: the candidate policies
   (each a list of steps with order, Tcl and mode committed / candidate), the default policy,
-  the strategy selector (its code file and fitted model), the extra actions and the
-  runtime cost model.
+  the strategy selector (its code file and fitted model) and the
+  runtime cost model. Budget left after the chosen policy goes to the other candidate
+  policies in P order, each run whole and kept only if it improves WNS.
 - `selectors/<name>.py` is the selector pramana's LLM wrote and pramana validated:
   `predict(model, reports, features, budget)` picks one policy for a design and time budget
   (budget in multiples of the design's estimated route Explore time; None: the default policy).

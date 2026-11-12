@@ -1,5 +1,6 @@
-"""sequence_for(bin, budget_s, prims) -> [Step]: the bin's learned steps, then the learned
-extra actions, while the learned cost model says they fit the budget.
+"""sequence_for(bin, budget_s, prims) -> [Step]: the chosen policy's steps, then each other
+candidate policy (in pramana's order: best mean first, then by coverage) as one
+keep-if-better step, while the learned cost model says they fit the budget.
 
 Each Step's Tcl assumes an open ROUTED design and leaves it routed.
 mode 'committed' = run plainly; 'candidate' = keep-if-better (revert if WNS gets worse).
@@ -35,15 +36,25 @@ def rel_budget(budget_s, prims=None):
     return round(budget_s / est_secs(["ref"], prims), 2)
 
 
+def _order(k):
+    """P0, P1, ... in numeric order (other names after, alphabetically)."""
+    return (0, int(k[1:]), "") if k[:1] == "P" and k[1:].isdigit() else (1, 0, k)
+
+
 def sequence_for(bin_name, budget_s, prims=None):
     """bin_name: a policy name from choose_policy (OUT_OF_RANGE_BIN: the default policy, every
     step a candidate)."""
     pols = POLICY["policies"]
     key = bin_name if bin_name in pols else POLICY["default_policy"]
     base = list(pols.get(key, []))
-    names = {s["name"] for s in base}
+    # leftover budget: the other candidate policies, each run whole on the best state so far
+    # and kept only if it improves WNS
+    rest = [{"name": f"policy {k}", "mode": "candidate",
+             "tcl": [t for s in pols[k] for t in s["tcl"]],
+             "cmds": [c for s in pols[k] for c in s["cmds"]]}
+            for k in sorted(pols, key=_order) if k != key and pols[k]]
     steps, used = [], 0.0
-    for s in base + [e for e in POLICY["extra_actions"] if e["name"] not in names]:
+    for s in base + rest:
         mode = "candidate" if bin_name == OUT_OF_RANGE_BIN else s["mode"]
         st = Step(s["name"], s["tcl"], mode, s["cmds"])
         st.est_secs = est_secs(st.cmds, prims)
