@@ -367,7 +367,7 @@ def check_selector(c: Campaign, kb: dict, mith: Path, log=print) -> None:
             bad.append(key)
     if bad:
         raise SystemExit(f"emit: bundled selector {s['name']} picks differently on {bad}")
-    log(f"[compile] selector {s['name']}: same picks as in training on {len(want)} designs")
+    log(f"[compile] selector {s['name']}: same picks as in training on {len(want)} design x budget rows")
     have = pol.get("ext_reports")
     need = profile_ext.used_ext(used)
     if have is not None and not need <= set(have):
