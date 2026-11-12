@@ -293,6 +293,7 @@ def write_mithya(kb: dict, b: dict, mith: Path) -> dict:
         if f.suffix in (".py", ".md"):
             shutil.copy(f, mith / f.name)
     (mith / "kib.tcl").write_text(KIB_TCL)
+    (mith / "measure_procs.tcl").write_text(tcl.MEASURE_PROCS)   # run.py: input/final metrics
     shutil.copy(REPO / "pramana" / "features.py", mith / "features.py")
     (mith / "profile.tcl").write_text(
         "# Run in Vivado on an open routed design with _rd set to an output dir; then\n"

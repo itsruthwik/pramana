@@ -18,3 +18,17 @@ A fixed executor for a pramana-trained policy. It holds no knowledge about Vivad
   base features. `kib.tcl` is the keep-if-better Tcl.
 
 These files are the same for every trained bundle; only `policy.json` and `selectors/` change.
+
+## Running
+
+Installing knowledge is offline: pramana's emit writes `policy.json` and `selectors/` into the
+bundle. At run time the only input is a routed DCP:
+
+    python run.py <design.dcp> [--budget 3000] [--out <dir>] [--threads 4] [--vivado-settings <settings64.sh>]
+
+One Vivado session measures the design (`profile.tcl`, then `profile_ext.tcl`), the selector
+picks a policy for the budget left, a second session runs it (then the other candidates,
+keep-if-better) until mithya's start + budget. Output: `<out>/final.dcp` when the result is
+legal and better than the input (otherwise the input stands) and `<out>/result.json`
+(policy, plan, step log, input and final metrics, dWNS, measuring and total seconds). No LLM,
+no pramana campaign or store.

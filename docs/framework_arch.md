@@ -253,7 +253,9 @@ Pure formatting, no decisions (`ship.decide` makes them in S7b). The same KB emi
   committed/candidate mode, default policy, the selector's name and fitted model,
   cost model; leftover budget runs the other candidates in P order, each keep-if-better) and `selectors/<name>.py`; `profile.tcl` and
   `profile_ext.tcl` measure a new design (`profile_ext.tcl` holds only the extended reports the
-  shipped selector read in training, `policy.json` `ext_reports`). Emit checks that the bundle's selector reproduces
+  shipped selector read in training, `policy.json` `ext_reports`). At run time mithya takes only a DCP: `python run.py <dcp> [--budget s]`
+  measures it, lets the selector pick a policy and runs it (see `pramana/mithya_shim/README.md`).
+  Emit checks that the bundle's selector reproduces
   the KB's picks on the training designs.
 
 ## Evaluation
