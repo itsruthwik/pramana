@@ -255,6 +255,29 @@ class Tracked(dict):
         self.used.add(k)
         return super().get(k, default)
 
+    def __contains__(self, k):
+        self.used.add(k)
+        return super().__contains__(k)
+
+    def _all(self):                   # iterating reads every report: all are needed
+        self.used.update(super().keys())
+
+    def __iter__(self):
+        self._all()
+        return super().__iter__()
+
+    def keys(self):
+        self._all()
+        return super().keys()
+
+    def items(self):
+        self._all()
+        return super().items()
+
+    def values(self):
+        self._all()
+        return super().values()
+
 
 def _fit_predict(sel, path: Path, train: list[dict], test: list[dict], cands: list[str],
                  used: set | None = None) -> list:

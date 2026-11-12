@@ -7,8 +7,9 @@ Output, next to the S1 profile in the store: <dcp>/vivado_<ver>/profile_ext/
   paths.tsv (1000 worst setup paths), hold_paths.tsv (200 worst hold paths),
   report_secs.json (seconds per report), done.json.
 
-The same script is shipped in the mithya bundle (profile_ext.tcl), so a held-out design is
-measured exactly as the training designs were.
+The same report commands are shipped in the mithya bundle (profile_ext.tcl), restricted to the
+reports the shipped selector reads, so a held-out design is measured exactly as the training
+designs were, without paying for reports nobody reads.
 """
 from __future__ import annotations
 
@@ -72,17 +73,27 @@ def timed_report(name: str, cmd: str) -> str:
             f'puts "EXT_SECS {name} [expr {{([clock milliseconds] - $_t0) / 1000.0}}]"\n')
 
 
-def body() -> str:
-    """Reports on the open design (shared by training and the mithya bundle); needs $_rd."""
-    p = [tcl.PATHS_DUMP, HOLD_DUMP,
-         "set _t0 [clock milliseconds]",
-         "_paths_dump 1000 [file join $_rd paths.tsv]",
-         'puts "EXT_SECS paths [expr {([clock milliseconds] - $_t0) / 1000.0}]"',
-         "set _t0 [clock milliseconds]",
-         "_paths_dump_hold 200 [file join $_rd hold_paths.tsv]",
-         'puts "EXT_SECS hold_paths [expr {([clock milliseconds] - $_t0) / 1000.0}]"']
-    p += [timed_report(n, c) for n, c in REPORTS_EXT]
+def body(only=None) -> str:
+    """Reports on the open design (shared by training and the mithya bundle); needs $_rd.
+    only: the extended report names to produce (e.g. {'paths', 'utilization_hier'}); None: all
+    (training). The mithya bundle gets only those its selector reads."""
+    want = (lambda n: True) if only is None else (lambda n: n in only)
+    p = []
+    if want("paths"):
+        p += [tcl.PATHS_DUMP, "set _t0 [clock milliseconds]",
+              "_paths_dump 1000 [file join $_rd paths.tsv]",
+              'puts "EXT_SECS paths [expr {([clock milliseconds] - $_t0) / 1000.0}]"']
+    if want("hold_paths"):
+        p += [HOLD_DUMP, "set _t0 [clock milliseconds]",
+              "_paths_dump_hold 200 [file join $_rd hold_paths.tsv]",
+              'puts "EXT_SECS hold_paths [expr {([clock milliseconds] - $_t0) / 1000.0}]"']
+    p += [timed_report(n, c) for n, c in REPORTS_EXT if want(n)]
     return "\n".join(p) + "\n"
+
+
+def used_ext(reports_used) -> set:
+    """The extended report names among a selector's reports_used ('ext/<name>' keys)."""
+    return {k[4:] for k in reports_used or [] if k.startswith("ext/")}
 
 
 def script(dcp: str, out: Path, threads: int) -> str:

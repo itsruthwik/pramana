@@ -309,12 +309,17 @@ def write_mithya(kb: dict, b: dict, mith: Path) -> dict:
     for old in ("extractors",):
         if (mith / old).exists():
             shutil.rmtree(mith / old)
+    ks = kb.get("selector") or {}
+    ext_only = (profile_ext.used_ext(ks["reports_used"])
+                if ks.get("name") == sel["name"] and "reports_used" in ks else None)
     (mith / "profile_ext.tcl").write_text(
         "# Extended profile (pramana S7a). Run in Vivado on the open routed design with _rd set\n"
         "# to an output dir; the selector reads these reports with profile.tcl's (extract.py).\n"
-        + tcl.MEASURE_PROCS + profile_ext.body())
+        "# Only the reports the shipped selector reads (all if unknown).\n"
+        + tcl.MEASURE_PROCS + profile_ext.body(ext_only))
     policy = {"selector": {k: sel[k] for k in ("name", "file", "model")},
               "default_policy": default, "policies": pols,
+              "ext_reports": None if ext_only is None else sorted(ext_only),
               "cost_model": kb["cost_model"],
               "feature_ranges": kb["feature_ranges"], "kb_meta": kb["meta"],
               "selector_scores": {k: sel.get(k) for k in ("lofo", "val")}}
