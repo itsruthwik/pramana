@@ -27,17 +27,20 @@ def est_secs(cmds, prims):
     return t
 
 
+def rel_budget(budget_s, prims=None):
+    """The budget in multiples of the design's estimated route Explore time (the selector's
+    budget input), or None if there is no budget or no estimate."""
+    if not budget_s or not prims or "ref" not in POLICY["cost_model"]:
+        return None
+    return round(budget_s / est_secs(["ref"], prims), 2)
+
+
 def sequence_for(bin_name, budget_s, prims=None):
     """bin_name: a policy name from choose_policy (OUT_OF_RANGE_BIN: the default policy, every
     step a candidate)."""
-    pols, by_budget = POLICY["policies"], POLICY["by_budget"]
+    pols = POLICY["policies"]
     key = bin_name if bin_name in pols else POLICY["default_policy"]
     base = list(pols.get(key, []))
-    if key == POLICY["default_policy"] and POLICY["selector"]["name"] == "one_bin" and by_budget \
-            and prims and "ref" in POLICY["cost_model"]:
-        rel = budget_s / est_secs(["ref"], prims)
-        fit = [b for b in by_budget if b["rel_budget"] <= rel] or by_budget[:1]
-        base = fit[-1]["steps"] or base
     names = {s["name"] for s in base}
     steps, used = [], 0.0
     for s in base + [e for e in POLICY["extra_actions"] if e["name"] not in names]:

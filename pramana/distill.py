@@ -434,62 +434,6 @@ def interactions(c: Campaign, min_designs: int = 2) -> list[dict]:
     return out
 
 
-# --------------------------------------------------------------------------- budgets
-REL_BUDGETS = [3, 6, 12, 25, 50]   # budget / the design's route Explore time
-
-
-def _timeline(r: dict) -> list[tuple[float, float]]:
-    """(cumulative step seconds, WNS) at every routed state a run passed through."""
-    out, t, routed = [], 0.0, True
-    for s in r.get("steps") or []:
-        t += s.get("secs") or 0.0
-        if not s.get("ok"):
-            break
-        name = s["name"]
-        if "place" in name or "_opt" in name and "phys_opt" not in name:
-            routed = False
-        if "route" in name:
-            routed = True
-        if routed and s.get("wns_after") is not None:
-            out.append((t, s["wns_after"]))
-    return out
-
-
-def policies_by_budget(c: Campaign) -> dict:
-    """One policy per time budget, chosen like the one-bin policy (LOFO over families) but
-    scoring each candidate by what it reaches within the budget. Run with keep-if-better steps,
-    a policy is worth the best routed state it reached by then (0 if none). Budgets are
-    relative to each design's route Explore time, so they transfer across design sizes."""
-    fam = _families(c)
-    M, pols = policy_matrix(c)
-    designs = [d for d in fam if M and all(d in row for row in M.values())]
-    if len(designs) < 3:
-        return {"status": "fewer than 3 designs with every policy replayed", "budgets": []}
-    inp = {d: c.input_state(d)["wns"] for d in designs}
-    ref = {d: _ref_secs(c, d) for d in designs}
-    oracle = {d: _oracle(c, d) for d in designs}
-    tl: dict[str, dict[str, list]] = defaultdict(dict)
-    for r in c.results():
-        if r["start"] == "input" and r["chain_key"] in M and r["design"] in inp \
-                and not r.get("extra_tcl") and r["valid"]:
-            tl[r["chain_key"]][r["design"]] = _timeline(r)
-    out = []
-    for rb in REL_BUDGETS:
-        V = {k: {d: max([w - inp[d] for t, w in tl[k].get(d, []) if t <= rb * ref[d]] + [0.0])
-                 for d in designs} for k in M}
-        one = _pick(V, designs, oracle)
-        scores = []
-        for F in sorted({fam[d] for d in designs}):
-            tr = [d for d in designs if fam[d] != F]
-            k = _pick(V, tr, oracle)
-            scores += [_frac(V[k][d], oracle[d]) for d in designs if fam[d] == F]
-        out.append({"rel_budget": rb, "policy": one, "units": pols.get(one, {}).get("units"),
-                    "train_frac_of_oracle": round(statistics.mean(_frac(V[one][d], oracle[d])
-                                                                  for d in designs), 3),
-                    "lofo_frac_of_oracle": round(statistics.mean(scores), 3)})
-    return {"unit": "budget / route Explore secs of the design", "budgets": out}
-
-
 # --------------------------------------------------------------------------- placement portfolio
 def placement_portfolio(c: Campaign, max_k: int = 4, cost_per_extra: float = 0.01) -> dict:
     """A small set of placements to try first, keeping the best.
@@ -761,14 +705,11 @@ def run(c: Campaign, log=print) -> dict:
     M, pols_all = policy_matrix(c)
     sdesigns = [d for d in fam if M and all(d in row for row in M.values())]
     if len(sdesigns) >= 3:                                                        # S7b selector
-        sel = strategy.run(c, M, {d: _oracle(c, d) for d in sdesigns}, pols_all, sdesigns, log=log)
+        sel = strategy.run(c, M, {d: _oracle(c, d) for d in sdesigns}, pols_all, sdesigns,
+                           {d: _ref_secs(c, d) for d in sdesigns}, log=log)
     pol["portfolio"] = placement_portfolio(c)
     log(f"[distill] placement portfolio: {pol['portfolio'].get('chains') or pol['portfolio'].get('status')}"
         f" (score by size {pol['portfolio'].get('score_by_k')})")
-    pol["by_budget"] = policies_by_budget(c)
-    log("[distill] policy by budget: " + (", ".join(
-        f"x{b['rel_budget']}={b['policy']} ({b['lofo_frac_of_oracle']})"
-        for b in pol["by_budget"]["budgets"]) or pol["by_budget"].get("status", "")))
     inter = interactions(c)
     log(f"[distill] interactions: {len(inter)} (" + ", ".join(
         f"{t} {sum(1 for x in inter if x['type'] == t)}"

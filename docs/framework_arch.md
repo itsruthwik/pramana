@@ -214,7 +214,8 @@ It runs only here, so S0–S6 are unchanged; the same Tcl ships to mithya as `pr
 **S7b, strategy selector** (`pramana/strategy.py`). The 8 best policies by mean fraction of
 oracle are candidates. Besides two built-ins (one bin; a one-feature stump), an LLM writes 4
 selectors, each a Python file with `fit(train) -> model` and `predict(model, reports,
-features) -> one policy`, free to use any report, a feature, a PCA component, nearest
+features, budget) -> one policy` (budget in multiples of the design's route Explore time;
+training rows are design x budget, each policy scored by the best state it reached within it), free to use any report, a feature, a PCA component, nearest
 neighbours or anything else. Each selector is scored leave-one-family-out on the training
 designs and on a separate validation campaign (the 8 candidate chains run on its designs).
 One ships only if it beats one bin on both; otherwise one bin ships. Test designs are never
@@ -229,9 +230,6 @@ seen by pramana.
 - policies: the design × policy matrix scored as fraction of each design's best gain, one bin
   vs two bins compared on held-out families plus a shuffle test; below 3 designs an in-sample
   pick, marked as such;
-- policies per time budget: the same held-out-family pick, but each candidate scored by the
-  best routed state it reached within the budget (from per-step times and WNS in its run);
-  budgets are multiples of the design's route Explore time, so they transfer across sizes;
 - interactions: for each step run on an earlier state, its gain on top of that state vs from
   the input, grouped by what produced the state (a re-placement, or post-route steps only):
   complement (both beat either alone), substitute (helps alone, adds nothing after),
@@ -252,7 +250,7 @@ Pure formatting, no decisions (`ship.decide` makes them in S7b). The same KB emi
 - **Deterministic flow (mithya):** a fixed shim (`pramana/mithya_shim/`, the same for every
   KB) plus what was learned: `policy.json` (candidate policies with step order, Tcl and
   committed/candidate mode, default policy, the selector's name and fitted model, extra
-  actions, budget policies, cost model) and `selectors/<name>.py`; `profile.tcl` and
+  actions, cost model) and `selectors/<name>.py`; `profile.tcl` and
   `profile_ext.tcl` measure a new design. Emit checks that the bundle's selector reproduces
   the KB's picks on the training designs.
 

@@ -218,14 +218,6 @@ def context_md(kb: dict, b: dict) -> str:
                  f"({FEATURE_DOC.get(b['feature'], 'see features')}) on the open design and runs "
                  f"::pramana::policy_low or ::pramana::policy_high; "
                  f"::pramana::feature {b['feature']} returns the value alone.")
-    bb = (kb["policies"].get("by_budget") or {}).get("budgets") or []
-    if b["type"] == "one" and bb:
-        L += ["", "### Strategy by time budget",
-              "Budget is in multiples of this design's route_design -directive Explore time "
-              "(estimate it from a first route or from the design size). Best policy found for each "
-              "budget, and the fraction of best-known gain it reached on held-out families:"]
-        for x in bb:
-            L.append(f"- at least {x['rel_budget']}x: {x['policy']} ({x['lofo_frac_of_oracle']:.0%})")
     L += ["", "### Actions measured from the input checkpoint (one step each)",
           "action | designs | median dWNS | P(gain) | P(regress) | rel. cost | grade | ship",
           "--- | --- | --- | --- | --- | --- | --- | ---"]
@@ -309,7 +301,7 @@ def write_mithya(kb: dict, b: dict, mith: Path) -> dict:
         + "".join(tcl.safe_report(n, cmd) for n, cmd in prof_mod.REPORTS))
     sh = ship.decide(kb)       # kb["ship"] when distill made it (legacy KBs: computed here)
     pols, default, sel = sh["policies"], sh["default_policy"], sh["selector"]
-    extra, by_budget = sh["extra_actions"], sh["by_budget"]
+    extra = sh["extra_actions"]
     sd = mith / "selectors"
     if sd.exists():
         shutil.rmtree(sd)
@@ -324,7 +316,7 @@ def write_mithya(kb: dict, b: dict, mith: Path) -> dict:
         + tcl.MEASURE_PROCS + profile_ext.body())
     policy = {"selector": {k: sel[k] for k in ("name", "file", "model")},
               "default_policy": default, "policies": pols, "extra_actions": extra,
-              "by_budget": by_budget, "cost_model": kb["cost_model"],
+              "cost_model": kb["cost_model"],
               "feature_ranges": kb["feature_ranges"], "kb_meta": kb["meta"],
               "selector_scores": {k: sel.get(k) for k in ("lofo", "val")}}
     (mith / "policy.json").write_text(json.dumps(policy, indent=1, sort_keys=True))
@@ -336,9 +328,6 @@ def write_mithya(kb: dict, b: dict, mith: Path) -> dict:
     for k, ss in pols.items():
         md.append(f"## policy {k}" + (f" ({keys[k]})" if keys.get(k) else ""))
         md += [f"- [{s['mode']}] {s['name']}: `{'; '.join(s['tcl'])}`" for s in ss]
-    for x in by_budget:
-        md.append(f"## budget >= {x['rel_budget']} x route Explore time (LOFO {x['lofo']})")
-        md += [f"- [{s['mode']}] {s['name']}" for s in x["steps"]]
     md += ["", "## extra actions (if budget remains)"]
     md += [f"- [{s['mode']}] {s['name']}" for s in extra]
     (mith / "POLICY.md").write_text("\n".join(md) + "\n")
@@ -358,11 +347,13 @@ def check_selector(c: Campaign, kb: dict, mith: Path, log=print) -> None:
     pol = json.loads((mith / "policy.json").read_text())
     s = pol["selector"]
     bad = []
-    for did, pick in want.items():
+    for key, pick in want.items():
+        did, b = key.rsplit("@", 1)
         r = extract_reports(c, did)
-        got = sel.predict(mith / s["file"], s["model"], r, c.features(did), pol["policies"])
+        got = sel.predict(mith / s["file"], s["model"], r, c.features(did),
+                          None if b == "inf" else float(b), pol["policies"])
         if got != pick:
-            bad.append(did)
+            bad.append(key)
     if bad:
         raise SystemExit(f"emit: bundled selector {s['name']} picks differently on {bad}")
     log(f"[compile] selector {s['name']}: same picks as in training on {len(want)} designs")

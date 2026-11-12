@@ -120,8 +120,8 @@ def _units(p: dict) -> list:
 
 def decide(kb: dict) -> dict:
     """All shipping decisions for a KB (kb["ship"] if distill already made them): the
-    candidate policies as steps, the default policy, the strategy selector, extra actions and
-    budget policies. A KB without a learned selector (older KBs) gets the built-in one: ONE_BIN
+    candidate policies as steps, the default policy, the strategy selector, and extra actions
+    (the budget is a selector input). A KB without a learned selector (older KBs) gets the built-in one: ONE_BIN
     for one bin, STUMP's model for its two-bin rule."""
     if "ship" in kb:
         return kb["ship"]
@@ -155,11 +155,5 @@ def decide(kb: dict) -> dict:
     policy_keys = {s["name"] for v in pols.values() for s in v}
     extra = [s for s in _strip(policy_steps([[st] for st in extra_units], kb))
              if s["name"] not in policy_keys]
-    by_budget = []
-    if selector["name"] == "one_bin":
-        for x in ((kb["policies"].get("by_budget") or {}).get("budgets") or []):
-            if x.get("units"):
-                by_budget.append({"rel_budget": x["rel_budget"], "lofo": x["lofo_frac_of_oracle"],
-                                  "steps": _strip(policy_steps(x["units"], kb))})
     return {"bins": b, "policies": pols, "default_policy": default, "selector": selector,
-            "extra_units": extra_units, "extra_actions": extra, "by_budget": by_budget}
+            "extra_units": extra_units, "extra_actions": extra}

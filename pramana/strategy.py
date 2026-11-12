@@ -9,7 +9,8 @@ pramana/mithya_shim/selector.py). Two are built in (ONE_BIN: the best single pol
 one base feature, one threshold, a policy per side); the LLM proposes up to N_LLM more, any
 method (rules on report-derived quantities, principal components, nearest neighbours, ...).
 
-Each selector is scored twice, on the same per-design score:
+Training rows are (design, budget) pairs: the budget (BUDGETS, x the design's route Explore
+time) is a selector input. Each selector is scored twice, on the same per-row score:
   lofo  leave-one-family-out over the training designs (fit without the family, predict it);
   val   fit on all training designs, predict the validation designs (cfg.val_campaign), on
         which every candidate policy has been run (pramana never searches there).
@@ -35,6 +36,7 @@ CAND_K = 8
 N_LLM = 4
 EXCERPT_LINES = 40
 INVALID = -0.05
+BUDGETS = [3, 6, 12, 25, 50, None]   # x the design's route Explore time; None: unlimited
 
 
 def _shim(name: str):
@@ -56,7 +58,7 @@ def fit(train):
     return {"policy": max(names, key=lambda p: (mean[p], p))}
 
 
-def predict(model, r, f):
+def predict(model, r, f, budget):
     return model["policy"]
 '''
 
@@ -94,7 +96,7 @@ def fit(train):
             "fallback": _best(train, names), "range": [min(vals), max(vals)]}
 
 
-def predict(model, r, f):
+def predict(model, r, f, budget):
     """None (abstain: the default policy, every step a candidate) when the feature is missing
     or more than 10% of its training span outside the training range."""
     v = f.get(model["feature"]) if model.get("feature") else None
@@ -133,16 +135,62 @@ def alias(cands: list[str]) -> dict[str, str]:
     return {f"P{i}": k for i, k in enumerate(cands)}
 
 
-def design_rows(c: Campaign, ids: list[str], table: dict, oracle: dict, cands: list[str]) -> list[dict]:
+def timeline(r: dict) -> list[tuple[float, float]]:
+    """(cumulative step seconds, WNS) at every routed state a run passed through."""
+    out, t, routed = [], 0.0, True
+    for s in r.get("steps") or []:
+        t += s.get("secs") or 0.0
+        if not s.get("ok"):
+            break
+        name = s["name"]
+        if "place" in name or "_opt" in name and "phys_opt" not in name:
+            routed = False
+        if "route" in name:
+            routed = True
+        if routed and s.get("wns_after") is not None:
+            out.append((t, s["wns_after"]))
+    return out
+
+
+def timelines(c: Campaign, cands: list[str], ids: list[str]) -> dict:
+    """{policy: {design: timeline}} of the valid runs of each candidate from the input."""
+    tl: dict = {k: {} for k in cands}
+    for r in c.results():
+        if r["design"] in ids and r["start"] == "input" and r["chain_key"] in tl \
+                and not r.get("extra_tcl") and r["valid"]:
+            tl[r["chain_key"]][r["design"]] = timeline(r)
+    return tl
+
+
+def design_rows(c: Campaign, ids: list[str], table: dict, oracle: dict, cands: list[str],
+                ref: dict) -> list[dict]:
+    """One row per design and budget. Within a budget a policy (keep-if-better) is worth the best
+    routed state it reached by then (0 if none)."""
     fam = {d["id"]: d["family"] for d in c.designs()}
+    tl = timelines(c, cands, ids)
     rows = []
     for did in ids:
         d = c.design(did)
-        rows.append({"id": did, "family": fam.get(did, ""), "features": c.features(did),
-                     "reports": extract.load_reports(c.profile_dir(did), profile_ext.ext_dir(c.cfg, d)),
-                     "scores": {a: round(_frac(table[k][did], oracle[did]), 4)
-                                for a, k in alias(cands).items() if did in table.get(k, {})}})
+        base = {"id": did, "family": fam.get(did, ""), "features": c.features(did),
+                "reports": extract.load_reports(c.profile_dir(did), profile_ext.ext_dir(c.cfg, d))}
+        w0 = c.input_state(did)["wns"]
+        for b in BUDGETS:
+            sc = {}
+            for a, k in alias(cands).items():
+                if did not in table.get(k, {}):
+                    continue
+                if not tl[k].get(did):               # invalid run or no step log
+                    g = min(table[k][did], 0.0) if b is not None else table[k][did]
+                else:
+                    g = max([w - w0 for t, w in tl[k][did]
+                             if b is None or t <= b * ref[did]] + [0.0])
+                sc[a] = round(_frac(g, oracle[did]), 4)
+            rows.append({**base, "budget": b, "scores": sc})
     return rows
+
+
+def _key(t: dict) -> str:
+    return f"{t['id']}@{'inf' if t['budget'] is None else t['budget']}"
 
 
 def validation_table(c: Campaign, pols: dict, cands: list[str], log=print):
@@ -172,7 +220,8 @@ def validation_table(c: Campaign, pols: dict, cands: list[str], log=print):
             table[k][j["design"]] = r["d_wns"] if r["valid"] else INVALID
     oracle = {d["id"]: max([0.0] + [table[k][d["id"]] for k in cands if d["id"] in table[k]])
               for d in v.designs()}
-    return v, table, oracle
+    from .distill import _ref_secs
+    return v, table, oracle, {d['id']: _ref_secs(v, d['id']) for d in v.designs()}
 
 
 # --------------------------------------------------------------------------- scoring
@@ -195,7 +244,8 @@ def _fit_predict(sel, path: Path, train: list[dict], test: list[dict], cands: li
                  used: set | None = None) -> list:
     model = sel.fit(path, train)
     return model, [(t, sel.predict(path, model, Tracked(t["reports"], used) if used is not None
-                                   else t["reports"], t["features"], cands)) for t in test]
+                                   else t["reports"], t["features"], t["budget"], cands))
+                   for t in test]
 
 
 def _score(preds: list) -> float:
@@ -216,8 +266,8 @@ def lofo(sel, path: Path, rows: list[dict], cands: list[str]) -> float:
 def _prompt(rows: list[dict], pols: dict, cands: list[str]) -> str:
     sample = rows[0]
     L = [f"Write {N_LLM} STRATEGY SELECTORS for Vivado post-route timing closure: given a "
-         "new routed design's profile reports, pick which of the candidate policies (command "
-         "sequences) to run. Each selector must use a different method, e.g. thresholds on a "
+         "new routed design's profile reports and a time budget, pick which of the candidate "
+         "policies (command sequences) to run. Each selector must use a different method, e.g. thresholds on a "
          "quantity you compute from the reports, principal components, nearest training "
          "designs, a scoring rule per policy. Aim for methods that generalise to design "
          "families not seen in training (they are tested that way).", "",
@@ -228,23 +278,28 @@ def _prompt(rows: list[dict], pols: dict, cands: list[str]) -> str:
          "and base their decision on them (alone or with features); say in the method line "
          "which reports and quantities. Read features by name (f['util_lut']), never by "
          "position in a list.", "",
-         "Code: Python source defining fit(train) -> model and predict(model, r, f) -> ONE "
+         "Code: Python source defining fit(train) -> model and predict(model, r, f, budget) -> ONE "
          "policy name 'P0', 'P1', ... (or None to abstain: the default policy then runs with "
-         "every step kept only if it helps). train is a list of designs, each {'id', 'family', "
-         "'features': {name: value}, 'reports': {name: text}, 'scores': {policy: fraction of "
-         "the best known gain on that design, -1..1}}. model must be JSON-serializable (it is "
+         "every step kept only if it helps). budget is the time budget in multiples of the "
+         "design's route_design -directive Explore time (None: unlimited); a short budget favours "
+         "policies that gain early. train is a list of rows, one per design and budget, each "
+         "{'id', 'family', 'budget', 'features': {name: value}, 'reports': {name: text}, "
+         "'scores': {policy: fraction of the design's best known gain reached within that "
+         "budget, -1..1}} (rows of one design share its reports and features). model must be JSON-serializable (it is "
          "shipped as data). r is the new design's reports, f its base features. Standard "
          "library only, no file access; parse defensively (a report may be missing or start "
          "with 'REPORT_ERROR').", "",
          "Candidate policies:"]
     for a, k in alias(cands).items():
         L.append(f"- {a}: {k!r}")
-    L += ["", "Per-design scores (rows: designs; columns P0..; fraction of the best known gain) "
-          "and base features:"]
+    L += ["", "Per-design base features, then scores per budget (columns P0..; fraction of the "
+          "best known gain reached within the budget, x route Explore time; inf: unlimited):"]
     for t in rows:
-        L.append(f"- {t['id']} [{t['family']}]: " + " ".join(
-            f"{a}={t['scores'].get(a, float('nan')):.2f}" for a in alias(cands))
-                 + f"; features {json.dumps({k: v for k, v in t['features'].items() if v is not None})}")
+        if t["budget"] == BUDGETS[0]:
+            L.append(f"- {t['id']} [{t['family']}]: features "
+                     + json.dumps({k: v for k, v in t["features"].items() if v is not None}))
+        L.append(f"    {'inf' if t['budget'] is None else t['budget']}x: " + " ".join(
+            f"{a}={t['scores'].get(a, float('nan')):.2f}" for a in alias(cands)))
     L += ["", f"Reports available (key, size, first {EXCERPT_LINES} lines from {sample['id']}):"]
     for k, txt in sample["reports"].items():
         L.append(f"\n### r[{k!r}] ({len(txt)} chars)\n```\n"
@@ -255,14 +310,16 @@ def _prompt(rows: list[dict], pols: dict, cands: list[str]) -> str:
 
 
 # --------------------------------------------------------------------------- main
-def run(c: Campaign, M: dict, oracle: dict, pols: dict, designs: list[str], log=print) -> dict:
+def run(c: Campaign, M: dict, oracle: dict, pols: dict, designs: list[str], ref: dict,
+        log=print) -> dict:
     sel = _shim("selector")
     sd = c.root / "kb" / "selectors"
     sd.mkdir(parents=True, exist_ok=True)
     cands = candidates(M, designs, oracle)
     names = list(alias(cands))
-    rows = design_rows(c, designs, M, oracle, cands)
-    log(f"[strategy] {len(cands)} candidate policies, {len(rows)} training designs, "
+    rows = design_rows(c, designs, M, oracle, cands, ref)
+    log(f"[strategy] {len(cands)} candidate policies, {len(designs)} training designs x "
+        f"{len(BUDGETS)} budgets, "
         f"{len({t['family'] for t in rows})} families")
     reg = {"one_bin": {"method": "best single policy", "code": ONE_BIN, "builtin": True},
            "stump": {"method": "one base feature, one threshold", "code": STUMP, "builtin": True}}
@@ -277,8 +334,8 @@ def run(c: Campaign, M: dict, oracle: dict, pols: dict, designs: list[str], log=
     val = validation_table(c, pols, cands, log)
     vrows = []
     if val:
-        v, vtable, voracle = val
-        vrows = design_rows(v, [d["id"] for d in v.designs()], vtable, voracle, cands)
+        v, vtable, voracle, vref = val
+        vrows = design_rows(v, [d["id"] for d in v.designs()], vtable, voracle, cands, vref)
     for name, s in reg.items():
         path = sd / f"{name}.py"
         path.write_text(s["code"])
@@ -287,9 +344,9 @@ def run(c: Campaign, M: dict, oracle: dict, pols: dict, designs: list[str], log=
             model, preds = _fit_predict(sel, path, rows, vrows, names)
             s["model"] = model
             s["val"] = round(_score(preds), 4) if vrows else None
-            s["val_picks"] = {t["id"]: p for t, p in preds}
+            s["val_picks"] = {_key(t): p for t, p in preds}
             used = set()
-            s["train_picks"] = {t["id"]: p for t, p in
+            s["train_picks"] = {_key(t): p for t, p in
                                 _fit_predict(sel, path, rows, rows, names, used)[1]}
             s["reports_used"] = sorted(used)
             s["status"] = "scored"

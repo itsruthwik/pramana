@@ -4,10 +4,11 @@ A fixed executor for a pramana-trained policy. It holds no knowledge about Vivad
 
 - `policy.json` (written by pramana's S7) holds everything learned: the candidate policies
   (each a list of steps with order, Tcl and mode committed / candidate), the default policy,
-  the strategy selector (its code file and fitted model), the extra actions, the
-  budget-dependent policies and the runtime cost model.
+  the strategy selector (its code file and fitted model), the extra actions and the
+  runtime cost model.
 - `selectors/<name>.py` is the selector pramana's LLM wrote and pramana validated:
-  `predict(model, reports, features)` picks one policy for a design (None: the default policy).
+  `predict(model, reports, features, budget)` picks one policy for a design and time budget
+  (budget in multiples of the design's estimated route Explore time; None: the default policy).
 - `protocol.py` holds the fixed run protocol: default step estimate, step limit, grace period
   and what to do when the selector fails. Not learned; the same for every policy.
 - `classify.py` (choose_policy), `recipes.py`, `executor.py`, `ladder.py` interpret

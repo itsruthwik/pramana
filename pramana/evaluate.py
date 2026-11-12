@@ -61,8 +61,8 @@ def run(train: Campaign, ev: Campaign, budget_s: float = 3000, log=print,
             continue
         edir = profile_ext.ext_dir(ev.cfg, d)
         f = meas.design_features(ev.profile_dir(did), edir)
-        b = cls.choose_policy(ev.profile_dir(did), edir, f)
         prims = (ev.profile(did)["input"] or {}).get("prims")
+        b = cls.choose_policy(ev.profile_dir(did), edir, f, rec_mod.rel_budget(budget_s, prims))
         steps = rec_mod.sequence_for(b, budget_s, prims)
         plan[did] = {"bin": b, "steps": [(s.name, s.mode, round(s.est_secs)) for s in steps]}
         jobs.append(ev.job(did, ev.input_state(did), [], "evaluate",
