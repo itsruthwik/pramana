@@ -3,8 +3,12 @@
 For each design: profile -> features -> classify -> sequence_for(bin, budget) -> run all steps
 in one Vivado session (candidate steps keep-if-better) -> measure. Everything except the
 measurement comes from the bundle: its policy.json (learned by pramana) and its fixed shim
-(classify/recipes/executor + protocol.py), see pramana/mithya_shim/README.md. Compared against the
-design's Explore baselines (no-KB reference). Results go to <eval campaign>/results.jsonl.
+(classify/recipes/executor + protocol.py), see pramana/mithya_shim/README.md.
+
+Fair accounting: the profile mithya needs (S1 profile plus the extended reports its selector
+reads) is charged to the budget, so the policy runs in what is left. Each Explore baseline
+(no-KB reference) is scored the way mithya runs, keep-if-better within the same budget: the
+best routed state it reached by budget_s (0 if none), next to its unlimited result. Results go to <eval campaign>/results.jsonl.
 
   python -m pramana.evaluate <train_campaign> <eval_campaign> [budget_s]
 The eval campaign must already be initialised and profiled (pramana init/profile/baseline).
@@ -19,6 +23,7 @@ from pathlib import Path
 from . import profile_ext
 from .campaign import Campaign
 from .config import Config
+from .strategy import timeline
 
 BUNDLE_MODULES = ("protocol", "policy", "extract", "selector", "classify", "recipes",
                   "executor", "features", "measure")
@@ -54,6 +59,7 @@ def run(train: Campaign, ev: Campaign, budget_s: float = 3000, log=print,
                                      m["executor"], m["protocol"])
     # the selector reads the extended profile's reports
     profile_ext.run(ev.cfg, [d for d in ev.designs() if not designs or d["id"] in designs], log=log)
+    pol = json.loads((mdir / "policy.json").read_text())
     jobs, plan = [], {}
     for d in ev.designs():
         did = d["id"]
@@ -61,13 +67,17 @@ def run(train: Campaign, ev: Campaign, budget_s: float = 3000, log=print,
             continue
         edir = profile_ext.ext_dir(ev.cfg, d)
         f = meas.design_features(ev.profile_dir(did), edir)
-        prims = (ev.profile(did)["input"] or {}).get("prims")
-        b = cls.choose_policy(ev.profile_dir(did), edir, f, rec_mod.rel_budget(budget_s, prims))
-        steps = rec_mod.sequence_for(b, budget_s, prims)
-        plan[did] = {"bin": b, "steps": [(s.name, s.mode, round(s.est_secs)) for s in steps]}
+        prof = ev.profile(did)
+        prims = (prof["input"] or {}).get("prims")
+        prof_s = profile_secs(prof, edir, pol.get("ext_reports"))
+        left = max(budget_s - prof_s, 60.0)
+        b = cls.choose_policy(ev.profile_dir(did), edir, f, rec_mod.rel_budget(left, prims))
+        steps = rec_mod.sequence_for(b, left, prims)
+        plan[did] = {"bin": b, "profile_s": prof_s, "run_budget_s": round(left),
+                     "steps": [(s.name, s.mode, round(s.est_secs)) for s in steps]}
         jobs.append(ev.job(did, ev.input_state(did), [], "evaluate",
-                           tag=f"mithya:{label}:{b}", extra_tcl=ex.policy_tcl(steps, budget_s),
-                           timeout_s=budget_s + proto.GRACE_S))
+                           tag=f"mithya:{label}:{b}", extra_tcl=ex.policy_tcl(steps, left),
+                           timeout_s=left + proto.GRACE_S))
     (ev.root / f"eval_plan_{label}.json").write_text(json.dumps(plan, indent=1))
     ev.runner.run_many(jobs, log=log)
     # identical policies (same Tcl) are the same run: look every job up, new or reused
@@ -77,14 +87,37 @@ def run(train: Campaign, ev: Campaign, budget_s: float = 3000, log=print,
                                 for j in jobs) if k in by_id]
     out = []
     for r in recs:
-        base = {x["tag"]: x["d_wns"] for x in ev.results(r["design"]) if x["purpose"] == "baseline"}
-        row = {"design": r["design"], "bin": plan[r["design"]]["bin"], "valid": r["valid"],
-               "d_wns": r["d_wns"], "secs": r["opt_secs"], "baselines": base}
+        did = r["design"]
+        w0 = ev.input_state(did)["wns"]
+        base, base_b = {}, {}
+        for x in ev.results(did):
+            if x["purpose"] == "baseline":
+                base[x["tag"]] = x["d_wns"]
+                tl = timeline(x) if x["valid"] else []
+                base_b[x["tag"]] = round(max([w - w0 for t, w in tl if t <= budget_s] + [0.0]), 4)
+        p = plan[did]
+        row = {"design": did, "bin": p["bin"], "valid": r["valid"], "d_wns": r["d_wns"],
+               "secs": r["opt_secs"], "profile_s": p["profile_s"],
+               "total_s": round((r["opt_secs"] or 0) + p["profile_s"], 1),
+               "baselines": base, "baselines_at_budget": base_b,
+               "best_baseline_at_budget": max(base_b.values(), default=None)}
         out.append(row)
-        log(f"[evaluate] {r['design']}: bin={row['bin']} valid={r['valid']} dWNS={r['d_wns']} "
-            f"in {r['opt_secs']}s; Explore baselines {base}")
+        log(f"[evaluate] {did}: bin={row['bin']} valid={r['valid']} dWNS={r['d_wns']} in "
+            f"{row['total_s']}s (profile {p['profile_s']}s); Explore baselines within "
+            f"{budget_s:.0f}s {base_b} (unlimited {base})")
     (ev.root / f"eval_{label}.json").write_text(json.dumps(out, indent=1))
     return out
+
+
+def profile_secs(prof: dict, edir: Path, ext_reports) -> float:
+    """Seconds mithya spends measuring a design: the S1 profile plus the extended reports its
+    selector reads (ext_reports None: all; measured per report in training's report_secs.json)."""
+    s = prof.get("profile_secs") or 0.0
+    rs = Path(edir) / "report_secs.json"
+    if rs.exists():
+        secs = json.loads(rs.read_text())
+        s += sum(v for k, v in secs.items() if ext_reports is None or k in ext_reports)
+    return round(s, 1)
 
 
 if __name__ == "__main__":
