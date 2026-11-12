@@ -312,11 +312,7 @@ def write_mithya(kb: dict, b: dict, mith: Path) -> dict:
     ks = kb.get("selector") or {}
     ext_only = (profile_ext.used_ext(ks["reports_used"])
                 if ks.get("name") == sel["name"] and "reports_used" in ks else None)
-    (mith / "profile_ext.tcl").write_text(
-        "# Extended profile (pramana S7a). Run in Vivado on the open routed design with _rd set\n"
-        "# to an output dir; the selector reads these reports with profile.tcl's (extract.py).\n"
-        "# Only the reports the shipped selector reads (all if unknown).\n"
-        + tcl.MEASURE_PROCS + profile_ext.body(ext_only))
+    write_profile_ext(mith, ext_only)
     policy = {"selector": {k: sel[k] for k in ("name", "file", "model")},
               "default_policy": default, "policies": pols,
               "ext_reports": None if ext_only is None else sorted(ext_only),
@@ -338,9 +334,20 @@ def write_mithya(kb: dict, b: dict, mith: Path) -> dict:
     return policy
 
 
+def write_profile_ext(mith: Path, ext_only) -> None:
+    (mith / "profile_ext.tcl").write_text(
+        "# Extended profile (pramana S7a). Run in Vivado on the open routed design with _rd set\n"
+        "# to an output dir; the selector reads these reports with profile.tcl's (extract.py).\n"
+        "# Only the reports the shipped selector reads (all if unknown).\n"
+        + tcl.MEASURE_PROCS + profile_ext.body(ext_only))
+
+
 def check_selector(c: Campaign, kb: dict, mith: Path, log=print) -> None:
     """Emit check: the bundle's selector, run from the bundle, makes on every training design
-    the pick distill recorded."""
+    the pick distill recorded. It also re-records which reports the selector reads (with the
+    current tracking, whatever the KB says) and widens the bundle's extended profile if the
+    KB's list missed any."""
+    from .strategy import Tracked
     want = (kb.get("selector") or {}).get("train_picks")
     if not want:
         return
@@ -350,10 +357,10 @@ def check_selector(c: Campaign, kb: dict, mith: Path, log=print) -> None:
     spec.loader.exec_module(sel)
     pol = json.loads((mith / "policy.json").read_text())
     s = pol["selector"]
-    bad = []
+    bad, used = [], set()
     for key, pick in want.items():
         did, b = key.rsplit("@", 1)
-        r = extract_reports(c, did)
+        r = Tracked(extract_reports(c, did), used)
         got = sel.predict(mith / s["file"], s["model"], r, c.features(did),
                           None if b == "inf" else float(b), pol["policies"])
         if got != pick:
@@ -361,6 +368,14 @@ def check_selector(c: Campaign, kb: dict, mith: Path, log=print) -> None:
     if bad:
         raise SystemExit(f"emit: bundled selector {s['name']} picks differently on {bad}")
     log(f"[compile] selector {s['name']}: same picks as in training on {len(want)} designs")
+    have = pol.get("ext_reports")
+    need = profile_ext.used_ext(used)
+    if have is not None and not need <= set(have):
+        pol["ext_reports"] = sorted(need | set(have))
+        (mith / "policy.json").write_text(json.dumps(pol, indent=1, sort_keys=True))
+        write_profile_ext(mith, set(pol["ext_reports"]))
+        log(f"[compile] selector reads extended reports the KB did not list: "
+            f"{sorted(need - set(have))}; bundle profile widened")
 
 
 def extract_reports(c: Campaign, did: str) -> dict:
